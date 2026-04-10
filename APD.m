@@ -23,6 +23,7 @@ APD90Times = zeros(length(pks), 1);
 % Find the index of the closest value to 90% of the peak value for each
 % element of the pks array
 
+i = 1;
 for i = 1:length(pks)
 % while i < length(pks)
     % locs
