@@ -2,7 +2,6 @@ function [APD90, DI, locs, APD90Times, APD90Values, pks] = APD(APData, APTime)
 % Determine peak AP value
 
 [pks, locs] = findpeaks(APData, APTime, 'MinPeakProminence', 50);
-
 TimeIndices = zeros(length(locs) + 1, 1);
 
 for i = 1:length(locs)
@@ -23,11 +22,21 @@ APD90Times = zeros(length(pks), 1);
 % Find the index of the closest value to 90% of the peak value for each
 % element of the pks array
 
+i = 1;
 for i = 1:length(pks)
+% while i < length(pks)
+    % locs
+    % pks
+    % i
+
+    % if i > length(pks)
+    %     break
+    % end
+
     AP90 = pks(i)*0.1;
     minDistance = pks(i);
 
-    for j = TimeIndices(i):TimeIndices(i + 1) - 1
+    for j = TimeIndices(i):TimeIndices(i + 1) %- 1
         if abs(APData(j) - AP90) < minDistance
             APD90Values(i) = APData(j);
             APD90Times(i) = APTime(j);
@@ -35,11 +44,15 @@ for i = 1:length(pks)
         end
     end
 
+    % i = i + 1;
+
     if minDistance > pks(i)*0.05
         pks(i) = [];
         APD90Values(i) = [];
         APD90Times(i) = [];
         locs(i) = [];
+        % TimeIndices(i) = [];
+        % i = i - 1;
     end
 end
 
