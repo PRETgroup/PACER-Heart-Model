@@ -75,11 +75,9 @@ Last updated: January 12, 2026.
    - [Run model simulations](#run-model-simulations)
 
 6. [Examples](#examples)
-   - [Example 1:](#example-1)
-   - [Example 2:](#example-2)
-   - [Example 3:](#example-3)
-   - [Example 4:](#example-4)
-   - [Example 5:](#example-5)
+   - [Example 1: Intrinsic Automiticity](#example-1-intrinsic-automiticity)
+   - [Example 2: Ectopic Activity and pacemaker effect](#example-2-ectopic-activity-and-pacemaker-effect)
+   - [Example 3: Re-entrant cycle](#example-3-re-entrant-cycle)
 
 7. [Need-to-Know](#need-to-know)
 
@@ -463,70 +461,126 @@ To build a new heart model, update the Excel configuration file (nodes, paths, p
 
  > **Note:** The examples require version 2025b for the simulation.
 
-
-Before running the examples, [add the library files to the path](#Add-the-library-files-to-the-path).
-Then run the  following in the Matlab command window: 
+ Before running the examples, [add the library files to the path](#Add-the-library-files-to-the-path) by executing the  following command in the MATLAB command window: 
 
 ```matlab
->> RunCLSfixed     
+>> setup_Heart     
 ```    
 
-### Example 1: No Pacemaker
+All the example models are located in the directory [Examples/models](./Examples/models).
+  -  [`CLSfixedExample1.slx`](./Examples/models/CLSfixedExample1.slx)
+  - [`CLSfixedExample2.slx`](./Examples/models/CLSfixedExample2.slx) 
+  -  [`CLSfixedExample3.slx`](./Examples/models/CLSfixedExample3.slx) 
 
-In the Heart Model GUI, set the **Model Type** to **"No Pacemaker"** using the drop-down menu, then close the GUI with the current settings.
+The corresponding scripts required to run these models are located in [models](./models).
+ -  [`RunCLSfixedExample1.m`](./models/RunCLSfixedExample1.m)
+ - [`RunCLSfixedExample2.m`](./models/RunCLSfixedExample2.m) 
+ - [`RunCLSfixedExample3.m`](./models/RunCLSfixedExample3.m)
+
+### Example 1: Intrinsic Automiticity 
+
+This example demonstrates intrinsic automaticity and conduction in a three-node cardiac model consisting of  one subsidiary pacemaker cell  and two ventricular myocyte cells  in right ventricle .
 
 <p align="center">
   <img src="./images/Ex2pathconnection.png" alt="Ex2pathconnection" width="30%">
 </p>
 
-This configuration creates a 3-node model consisting of: 1 subsidiary pacemaker cell  and 2 ventricular myocyte cells  connected to represent a  path conduction in right ventricle .
-
-To plot the action potentials,  run the following in the Matlab command window;
+The scripts should be run from the [Examples](./Examples) directory.
+If you are currently inside a subdirectory (e.g., [models](./Examples/models)) navigate back  by running:  
 
 ```matlab
->> APPlot     
+>> cd ..     
+```   
+Then run the example script:
+
+```matlab
+>> RunCLSfixedExample1     
+```    
+After running the script, the Heart Model GUI will appear. set the **Model Type** to **"No Pacemaker"** using the drop-down menu, then close the GUI to proceed with the simulation.
+
+The  model [`CLSfixedExample1.slx`](./Examples/models/CLSfixedExample1.slx) will open in simulink. In the simulink model window, set the desired simulation time (e.g., 10 seconds) and run the simulation.
+
+Once the simulation is complete, you can generate the corresponding action potentials and restitution curves for this example.
+
+To plot the action potentials, run [`APPlotExample1.m`](./models/APPlotExample1.m) script or run the following command in the MATLAB command window;
+
+```matlab
+>> APPlotExample1     
 ```    
 <p align="center">
-  <img src="./images/Ex1ApPlot.png" alt="Ex1RestitutionCurve" width="90%">
+  <img src="./images/Ex1ApPlot.png" alt="Ex1ApPlot" width="90%">
 </p>
 
-To observe the restitution curve, run the following in the Matlab command window;
+To observe the restitution curve, run [`RestitutionCurveExample1.m`](./models/RestitutionCurveExample1.m) script or  run the following in the Matlab command window;
 
 ```matlab
->> RestitutionCurve
+>> RestitutionCurveExample1
 ```    
 <p align="center">
   <img src="./images/Ex1RestitutionCurve.png" alt="Ex1RestitutionCurve" width="60%">
 </p>
 
-### Example 2:
-In the Heart Model GUI, set the **Model Type** to **"Pacemaker"** using the drop-down menu, then close the GUI with the current settings.
+### Example 2: Ectopic Activity and pacemaker effect 
+This example demonstrates an ectopic activity occured in a left ventriculer myocyte cell illustated in a three-node cardiac model consisting of three ventricular myocyte cells and how DDD pacemaker restore normal rhythm.
 
 <p align="center">
   <img src="./images/Ex2pathconnection.png" alt="Ex2pathconnection" width="30%">
 </p>
 
-This configuration creates a 3-node model consisting of three ventricular myocyte cells . A pulse generator (with PulsePeriod set to 0.5 seconds) used for the electrical stimulation.
+Run the example script:
 
-To plot the action potential , run the following in the Matlab command window;
 ```matlab
->> APPlot     
-``` 
+>> RunCLSfixedExample2     
+```    
+After running the script, the Heart Model GUI will appear. set the **Model Type** to **"Pacemaker"** using the drop-down menu, then close the GUI with the current settings.
+
+- Electrical stimulation is provided by a pulse generator ( Pulse Period set to 0.5 seconds).
+
+The  model [`CLSfixedExample2.slx`](./Examples/models/CLSfixedExample2.slx) will open in simulink. In the simulink model window, set the desired simulation time (e.g., 10 seconds) and run the simulation.
+ 
+To plot the action potentials after pacemaker effect, run 
+[`APPlotExample2.m`](./models/APPlotExample2.m) 
+script or run the following command in the MATLAB command window;
+
+```matlab
+>> APPlotExample2    
+```   
 <p align="center">
   <img src="./images/Ex2ApPlot.png" alt="Ex2ApPlot" width="100%">
 </p> 
-To observe the restitution curve,  run the following in the Matlab command window;
+
+To observe the restitution curve, run [`RestitutionCurveExample2.m`](./models/RestitutionCurveExample2.m)
+ script or  run the following in the Matlab command window;
 
 ```matlab
->> RestitutionCurve
-```    
+>> RestitutionCurveExample2
+```        
 <p align="center">
   <img src="./images/Ex2RestitutionCurve.png" alt="Ex2RestitutionCurve" width="60%">
 </p>
 
-### Example 3: 
-### Example 4: 
-### Example 5: 
+### Example 3: Re-entrant cycle
+This example demonstrates an re-entrant cycle occured in  left ventricule, illustated in a four-node cardiac model.
+<p align="center">
+  <img src="./images/Ex3PathConnection.png" alt="Ex3PathConnection" width="30%">
+</p>
+Run the example script:
+
+```matlab
+>> RunCLSfixedExample3   
+```    
+After running the script, the Heart Model GUI will appear. set the **Model Type** to **"No Pacemaker"** using the drop-down menu, then close the GUI with the current settings.
+
+The  model [`CLSfixedExample3.slx`](./Examples/models/CLSfixedExample3.slx) will open in simulink. In the simulink model window, set the desired simulation time (e.g., 10 seconds) and run the simulation.
+
+To plot the action potentials after pacemaker effect, run [`APPlotExample3.m`](./models/APPlotExample3.m) script or run the following command in the MATLAB command window;
+
+```matlab
+>> APPlotExample3    
+```   
+<p align="center">
+  <img src="./images/Ex3ApPlot.png" alt="Ex3ApPlot" width="100%">
+</p> 
 
 ## References
 
