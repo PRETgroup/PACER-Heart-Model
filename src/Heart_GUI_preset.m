@@ -243,7 +243,7 @@ left_positions = [0.2 0.2 0.2 0.2 0.2];
 bot_positions = [0.7 0.6 0.5 0.4 0.3];
 h_positions = [0.1 0.1 0.1 0.1 0.1];
 w_positions = [0.1 0.1 0.1 0.1 0.1];
-string =[1000 170 500 230 250];
+string =[1000 80 500 230 250];
 tags = {'lri', 'avi', 'uri', 'vrp', 'pvarp'};
 for idx = 1:length(strings)
     uicontrol('Parent',ConfigGUI.pacemaker_settings,...
@@ -308,7 +308,7 @@ outputs.pacemaker = ConfigGUI.pacemaker.Value;
 outputs.tutorial = ConfigGUI.tutorial.Value;
 
 strings = {'LRI', 'AVI', 'URI', 'VRP', 'PVARP'};
-base = [1000 170 500 230 250];
+base = [1000 80 500 230 250];
 
 for i = 1:length(strings)
     q = findobj('tag',lower(strings(i)));

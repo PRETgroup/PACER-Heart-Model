@@ -106,6 +106,8 @@ for i=1:2
     newXLim = [max(0,sTime-stoptime) max(stoptime,sTime)];
     set(LineAxes{i},'Xlim',newXLim);
     addpoints(thisLineHandle,t,data);
+    Config.egm_outputs{i} = [Config.egm_outputs{i} data];
+    Config.egm_time{i} = [Config.egm_time{i} sTime];
     drawnow update;
 end
 % Update events
@@ -142,8 +144,19 @@ function sys=mdlTerminate(t,x,u);
 sys = [];
 % Link to GUI
 Config=get_param(gcbh,'UserData');
-filename=Config.savepath;
+filename=[Config.savepath, filesep, 'Cells.mat'];
 cells=Config.cells;
 save (filename,'cells');
+
+
+aegm = Config.egm_outputs{1};
+aegm_t = Config.egm_time{1};
+vegm = Config.egm_outputs{2};
+vegm_t = Config.egm_time{2};
+
+save ([Config.savepath, filesep, 'aegm_time.mat'],aegm_t)
+save ([Config.savepath, filesep, 'aegm_val.mat'],aegm)
+save ([Config.savepath, filesep, 'vegm_time.mat'],vegm_t)
+save ([Config.savepath, filesep, 'vegm_val.mat'],vegm)
 end
 

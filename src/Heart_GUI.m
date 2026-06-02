@@ -27,6 +27,8 @@ global ConfigGUI
 ConfigGUI.path_plot=[];
 ConfigGUI.cells=[];
 ConfigGUI.Node_pos=[];
+ConfigGUI.egm_outputs = {[]; []};
+ConfigGUI.egm_time = {[]; []};
 %% Link to the model
 ConfigGUI.modelName=modelName;
 ConfigGUI.mdl = mdl;

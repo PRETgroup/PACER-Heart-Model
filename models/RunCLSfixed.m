@@ -13,7 +13,7 @@
 % limitations under the License.
 %%
 clear all;
-%bdclose('all');
+bdclose('all');
 path_var=pwd;
 if ~contains('models',path_var)
     path_var = [path_var, filesep 'models'];
@@ -39,16 +39,22 @@ else
     switch outputs.param
         case 'Normal'        %1
             updatePara='parasNormal.mat';
+            folder = 'normal_ms';
         case 'parasMulti' %2
             updatePara='parasMulti.mat';
+            folder = 'multi_ms';
         case 'parasMulti2' %3
             updatePara='parasMulti2.mat';
+            folder = 'multi2_ms';
         case 'parasMulti3' %4
             updatePara='parasMulti3.mat';
+            folder = 'multi3_ms';
         case 'Bradycardia' %5
             updatePara = 'parasMulti_Bradycardia.mat';
+            folder = 'brady_ms';
         otherwise 
             updatePara='parasNormal.mat';
+            folder = 'normal_ms';
     end
 end
 assignin('base','sens_units',outputs.units) % Sensing charts Chart (unit) subsystem
@@ -64,6 +70,8 @@ if outputs.units == 2
     assignin('base','buffer',0.599); % for Libs_unified/Path_V3/Path Buffer_i and Buffer_j
     assignin('base','unit_conversion',1); % used with the N node ms/s setting in RR
     assignin('base','stoptime',2) % CLSfixed initial stop time
+    assignin('base','LCP',0)
+    assignin('base','LCP_delay',0.04) % Delay for LCP comms
 elseif outputs.units == 1
     filename='N3Cfg.mat'; 
     datafile='N3Data.mat'; 
@@ -75,6 +83,8 @@ elseif outputs.units == 1
     assignin('base','buffer',599);
     assignin('base','unit_conversion',1000);
     assignin('base','stoptime',2000)
+    assignin('base','LCP',1)
+    assignin('base','LCP_delay',40)
 end
 
 % Extract the node classification data from the xlsx file
@@ -123,7 +133,7 @@ modelName = models{outputs.pacemaker};
 % Specify the model path
 mdl=[path_var,filesep, modelName];
 % Specify the data save path
-savepath=[path_var,filesep 'Cells.mat'];
+savepath=[path_var, filesep, folder];
 
 % In the model, there should be a S-function to save data to the same structure of the GUI.
 Heart_GUI(mdl,modelName,filename,savepath,nodes_raw,probes_raw); 

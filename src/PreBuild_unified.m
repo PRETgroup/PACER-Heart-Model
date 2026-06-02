@@ -82,7 +82,7 @@ path = append(folder,'/Path_V3'); % The path model library
 probe=append(folder,'/Electrode'); % The EGM generation model library
 Buildmodel_fcn(HeartModel,filename,node_n,node_m,node_nm,...
     path,probe,path_var,library,Standalone);
-% If this function was started from Heart_Editing then incorporate it into
+% If this function was started from Heart_Editing_GUI then incorporate it into
 % CLSfixed
 if isstruct(arrays) && isfield(arrays,'model')
     load_system(HeartModel)

@@ -6,7 +6,7 @@ if ~contains('models',path_var)
     path_var = [path_var, filesep 'models'];
 end
 models={'CLSfixed', 'CLSfixed_pace', 'CLSfixed_nopace'};
-models = {'CLSfixed'};
+%models = {'CLSfixed'};
 HeartModel = 'HeartV11';
 load_system(HeartModel)
 % Revert the heart model to the original one

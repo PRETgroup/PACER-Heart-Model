@@ -40,5 +40,5 @@ for i=1:np
     pRange(i+nn,1:2)=ppPath(i,4:5);
 end
 % save the new parameters
-filename='parasMulti3.mat';
+filename='parasDmg1.mat';
 save (filename, 'ppNode','ppPath','pNode','pPath','pp','pRange');
