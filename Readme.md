@@ -13,6 +13,10 @@
 
 PACER/ HeartModelPub provides a computational heart model for simulating cardiac electrophysiology and testing implantable pacemaker devices in closed-loop scenarios.
 
+> [!IMPORTANT]
+> The `master` branch is currently under active restructuring. Please use the `legacy` branch until the migration is complete.
+
+
 HeartModelPub includes:
 
 - Pacemaker cell models [[1]](https://doi.org/10.1109/tbme.2017.2695537)  
