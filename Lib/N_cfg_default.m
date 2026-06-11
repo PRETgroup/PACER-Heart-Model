@@ -37,7 +37,7 @@ dictObj = Simulink.data.dictionary.open('N_dd.sldd');
 sectionObj = getSection(dictObj, 'Design Data');
 
 % 3. Find the parameter 'cfg_default' inside the dictionary
-paramEntry = getEntry(sectionObj, 'cfg_default');
+paramEntry = getEntry(sectionObj, 'cfg_default_N');
 
 % 4. Retrieve the actual Simulink.Parameter object from the entry
 paramObj = getValue(paramEntry);
@@ -46,7 +46,7 @@ paramObj = getValue(paramEntry);
 paramObj.Value = Config_MATLABStruct;
 
 % 6. Ensure the DataType is explicitly bound to your Bus
-paramObj.DataType = 'Bus: Config';
+paramObj.DataType = 'Bus: Config_N';
 
 % 7. Update the entry in the dictionary with the modified parameter object
 setValue(paramEntry, paramObj);
