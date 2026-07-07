@@ -124,6 +124,17 @@ M_cfgFields = ["ax0","ay0","az0","ax1","ay1","az1","ax2","ay2","az2","ax3","ay3"
     "bx1","by1","bz1","VR","VT","VO","a","b","c","d","e"];
 Path_cfgFields = ["CVi2j","Dij","aij","bij","cij","CVj2i","Dji","aji","bji","cji"];
 
+nodeVarNames = string(nodes.Properties.VariableNames);
+
+% Use explicit split headers (VT_n/VR_n and VT_m/VR_m) and map them to
+% canonical cfg fields VT/VR in node cfg structs.
+N_cfgSourceFields = N_cfgFields;
+M_cfgSourceFields = M_cfgFields;
+N_cfgSourceFields(N_cfgFields == "VT") = "VT_n";
+N_cfgSourceFields(N_cfgFields == "VR") = "VR_n";
+M_cfgSourceFields(M_cfgFields == "VT") = "VT_m";
+M_cfgSourceFields(M_cfgFields == "VR") = "VR_m";
+
 nodeNum = height(G.Nodes);
 pathNum = height(G.Edges);
 Nodes_cfg=cell(nodeNum,1);
@@ -132,8 +143,8 @@ Dipoles = cell(pathNum,1);
 
 node_type = upper(string(nodes.Type));
 
-requiredNCfgFields = N_cfgFields;
-requiredMCfgFields = M_cfgFields;
+requiredNCfgFields = unique([setdiff(N_cfgFields, ["VT", "VR"]), "VT_n", "VR_n"]);
+requiredMCfgFields = unique([setdiff(M_cfgFields, ["VT", "VR"]), "VT_m", "VR_m"]);
 missingNCfg = setdiff(requiredNCfgFields, string(nodes.Properties.VariableNames));
 if ~isempty(missingNCfg)
     error('read_Network:MissingNConfigColumns', ...
@@ -152,19 +163,26 @@ if ~isempty(missingPathCfg)
         'Path sheet is missing path config columns: %s', strjoin(missingPathCfg, ', '));
 end
 
+validateMappedFieldsExist(nodeVarNames, N_cfgSourceFields, 'N');
+validateMappedFieldsExist(nodeVarNames, M_cfgSourceFields, 'M');
+
 parfor k = 1:nodeNum
     
     switch node_type(k)
         case "N"
-            Nodes_cfg{k}=table2struct(nodes(k, N_cfgFields));
+            Nodes_cfg{k}=table2struct(nodes(k, N_cfgSourceFields));
+            Nodes_cfg{k}=renameStructFields(Nodes_cfg{k}, N_cfgSourceFields, N_cfgFields);
 
         case "M"
-            Nodes_cfg{k}=table2struct(nodes(k, M_cfgFields));
+            Nodes_cfg{k}=table2struct(nodes(k, M_cfgSourceFields));
+            Nodes_cfg{k}=renameStructFields(Nodes_cfg{k}, M_cfgSourceFields, M_cfgFields);
 
         case "NM"
             NM_struct = struct;
-            NM_struct.cfg_N = table2struct(nodes(k, N_cfgFields));
-            NM_struct.cfg_M = table2struct(nodes(k, M_cfgFields));
+            NM_struct.cfg_N = table2struct(nodes(k, N_cfgSourceFields));
+            NM_struct.cfg_N = renameStructFields(NM_struct.cfg_N, N_cfgSourceFields, N_cfgFields);
+            NM_struct.cfg_M = table2struct(nodes(k, M_cfgSourceFields));
+            NM_struct.cfg_M = renameStructFields(NM_struct.cfg_M, M_cfgSourceFields, M_cfgFields);
             Nodes_cfg{k} = NM_struct;
 
         otherwise
@@ -196,4 +214,28 @@ end
 G.Edges.pathCfg = Paths_cfg;
 G.Edges.dipole = Dipoles;
 
+end
+
+function validateMappedFieldsExist(varNames, sourceFields, nodeTypeLabel)
+missing = sourceFields(~ismember(sourceFields, varNames));
+if ~isempty(missing)
+    error('read_Network:MissingMappedConfigColumns', ...
+        '%s config is missing mapped source columns: %s', ...
+        nodeTypeLabel, strjoin(unique(missing), ', '));
+end
+end
+
+function sOut = renameStructFields(sIn, sourceFields, targetFields)
+sOut = sIn;
+for i = 1:numel(sourceFields)
+    src = char(sourceFields(i));
+    dst = char(targetFields(i));
+    if ~strcmp(src, dst)
+        sOut.(dst) = sOut.(src);
+        sOut = rmfield(sOut, src);
+    end
+end
+
+% Preserve the canonical field order expected by referenced model parameters.
+sOut = orderfields(sOut, cellstr(targetFields));
 end
