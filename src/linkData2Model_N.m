@@ -32,6 +32,9 @@ Config_MATLABStruct.r = 0.5;
 %% Model workspace
 load_system(modelFile);
 [~, modelName, ~] = fileparts(modelFile); 
+% set the constant block
+set_param(sprintf('%s/Constant',modelName),...
+   'Value', 'cfg',  'OutDataTypeStr', 'Bus: Config_N','ShowName', 'off');
 mdlWks=get_param(...
     modelName,...
     "ModelWorkspace");
