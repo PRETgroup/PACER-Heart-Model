@@ -5,9 +5,11 @@
 %  Link the data type definition to the model
 % -------------------------------------------------------------------
  modelFile='models/Node_NM_3D.slx';
-
+% Open dictionaries and create empty, perfectly-ordered template structs
+dict_ = Simulink.data.dictionary.open('NM_dd.sldd');
+Config_MATLABStruct_N = Simulink.Bus.createMATLABStruct('Config_N', [], [1 1], dict_);
+Config_MATLABStruct_M = Simulink.Bus.createMATLABStruct('Config_M', [], [1 1], dict_);
 % 
-Config_MATLABStruct_N = struct;
 Config_MATLABStruct_N.BCL = 0.814;
 Config_MATLABStruct_N.SD = 0.002;
 Config_MATLABStruct_N.f1 = 0.1;
@@ -30,7 +32,6 @@ Config_MATLABStruct_N.h = 0.2;
 Config_MATLABStruct_N.f = 0.1;
 Config_MATLABStruct_N.r = 0.5;
 
-Config_MATLABStruct_M = struct;
 Config_MATLABStruct_M.ax0 = -8.7;
 Config_MATLABStruct_M.ay0 = -190.9;
 Config_MATLABStruct_M.az0 = -190.4;
@@ -72,6 +73,7 @@ assignin(...
     Config_MATLABStruct);
 
 %% Attach dictionary
+set_param(modelName, 'EnableAccessToBaseWorkspace', 'off');
 set_param(...
     modelName,...
     "DataDictionary",...

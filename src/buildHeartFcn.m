@@ -1,4 +1,4 @@
-function heart = buildHeartFcn(G, refmodules, settings)
+function heart = buildHeartFcn(G,refmodules,settings)
 %BUILDHEART Build a heart Simulink model from a network graph.
 %   HEART = BUILDHEART(G, REFMODULES) builds a Simulink model from graph G,
 %   which is typically produced by READ_NETWORK. Node, path, and electrode
@@ -24,8 +24,6 @@ function heart = buildHeartFcn(G, refmodules, settings)
 %       - configTemplateModel : source model for config-set copy
 %       - apTargetNodes : string/scalar or string array of AP target nodes
 %       - vpTargetNodes : string/scalar or string array of VP target nodes
-%       Legacy aliases are also accepted:
-%       - apTargetNode, vpTargetNode
 %
 %   Output
 %   ------
@@ -78,182 +76,146 @@ function heart = buildHeartFcn(G, refmodules, settings)
 %           numel(heart.nodeSpecs), numel(heart.pathSpecs));
 
 if nargin < 3 || isempty(settings)
-   settings = getBuildSettings(refmodules);
+    settings = getBuildSettings();
 else
-   settings = normalizeBuildSettings(settings, refmodules);
+    settings = normalizeBuildSettings(settings);
 end
 
 validateBuildInputs(G, refmodules);
-
 moduleRefs = normalizeModules(refmodules);
 loadModuleSources(moduleRefs);
+heartModel = char(settings.modelName);
+if bdIsLoaded(heartModel)
+    close_system(heartModel, 0);
+end
+new_system(heartModel);
 
+if settings.openModel
+    open_system(heartModel);
+end
+configHeartModel(heartModel,moduleRefs,settings);
+layout = getLayout();
+%% Prepare the specs
 nodeCount = numnodes(G);
 pathCount = numedges(G);
 nodeNames = string(G.Nodes.Name);
 nodeTypes = upper(string(G.Nodes.Type));
 nodeCoordinates = [G.Nodes.x, G.Nodes.y, G.Nodes.z];
 validatePacingTargetNodes(settings, nodeNames);
-
 [startIdx, endIdx] = findedge(G);
-pathTable = G.Edges;
 dipoles = getDipoles(G, startIdx, endIdx);
-
-layout = getLayout();
 useParallel = canUseParallel(nodeCount, pathCount);
 
 nodeSpecs = cell(nodeCount, 1);
 if useParallel
-   parfor nodeIdx = 1:nodeCount
-      nodeSpecs{nodeIdx} = makeNodeSpec(nodeIdx, nodeNames(nodeIdx), ...
-         nodeTypes(nodeIdx), G.Nodes.cfg{nodeIdx}, moduleRefs, layout);
-   end
+    parfor nodeIdx = 1:nodeCount
+        nodeSpecs{nodeIdx} = makeNodeSpec(nodeIdx, nodeNames(nodeIdx), ...
+            nodeTypes(nodeIdx), moduleRefs, layout);
+    end
 else
-   for nodeIdx = 1:nodeCount
-      nodeSpecs{nodeIdx} = makeNodeSpec(nodeIdx, nodeNames(nodeIdx), ...
-         nodeTypes(nodeIdx), G.Nodes.cfg{nodeIdx}, moduleRefs, layout);
-   end
+    for nodeIdx = 1:nodeCount
+        nodeSpecs{nodeIdx} = makeNodeSpec(nodeIdx, nodeNames(nodeIdx), ...
+            nodeTypes(nodeIdx), moduleRefs, layout);
+    end
 end
 
 pathSpecs = cell(pathCount, 1);
 if useParallel
-   parfor pathIdx = 1:pathCount
-      pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
-         endIdx(pathIdx), nodeNames, nodeCoordinates, pathTable.pathCfg{pathIdx}, ...
-         moduleRefs, layout);
-   end
+    parfor pathIdx = 1:pathCount
+        pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
+            endIdx(pathIdx), nodeNames, nodeCoordinates,  ...
+            moduleRefs, layout);
+    end
 else
-   for pathIdx = 1:pathCount
-      pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
-         endIdx(pathIdx), nodeNames, nodeCoordinates, pathTable.pathCfg{pathIdx}, ...
-         moduleRefs, layout);
-   end
+    for pathIdx = 1:pathCount
+        pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
+            endIdx(pathIdx), nodeNames, nodeCoordinates,  ...
+            moduleRefs, layout);
+    end
 end
 
 electrodeSpecs = cell(pathCount, 1);
 if useParallel
-   parfor pathIdx = 1:pathCount
-      electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
-         dipoles{pathIdx}, moduleRefs, layout);
-   end
+    parfor pathIdx = 1:pathCount
+        electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
+            dipoles{pathIdx}, moduleRefs, layout);
+    end
 else
-   for pathIdx = 1:pathCount
-      electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
-         dipoles{pathIdx}, moduleRefs, layout);
-   end
+    for pathIdx = 1:pathCount
+        electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
+            dipoles{pathIdx}, moduleRefs, layout);
+    end
 end
 
 jointTags = buildJointTags(pathSpecs, nodeCount);
-
-heartModel = char(settings.heartModel);
-if bdIsLoaded(heartModel)
-   close_system(heartModel, 0);
-end
-
-new_system(heartModel);
-if settings.openModel
-   open_system(heartModel);
-end
-
-configTemplateModel = "";
-if isfield(settings, 'configTemplateModel') && strlength(string(settings.configTemplateModel)) > 0
-   configTemplateModel = string(settings.configTemplateModel);
-else
-   for moduleIdx = 1:numel(moduleRefs)
-      candidate = modelNameFromSource(moduleRefs(moduleIdx).module);
-      if strlength(candidate) == 0
-         candidate = stripFileExtension(moduleRefs(moduleIdx).module);
-      end
-
-      if strlength(candidate) == 0 || strcmpi(char(candidate), heartModel)
-         continue;
-      end
-
-      if bdIsLoaded(char(candidate)) || exist(sprintf('%s.slx', char(candidate)), 'file') || ...
-            exist(sprintf('%s.mdl', char(candidate)), 'file')
-         configTemplateModel = candidate;
-         break;
-      end
-   end
-end
-
-if strlength(configTemplateModel) > 0
-   load_system(char(configTemplateModel));
-   srcCs = getActiveConfigSet(char(configTemplateModel));
-   newCs = copy(srcCs);
-   attachConfigSet(heartModel, newCs, true);
-   setActiveConfigSet(heartModel, get_param(newCs, 'Name'));
-else
-   warning('buildHeart:MissingConfigTemplateModel', ...
-      'No config template model found. Using default config set for %s.', heartModel);
-end
-
-heartSubsystem = createHeartContainer(heartModel, layout);
-% 3. Create configuration value
-cfg = buildHeartConfiguration(G);
-% 4. Attach model environment
 parameterSpecs=[
-    nodeSpecs
     pathSpecs
     electrodeSpecs
-];
-attachHeartEnvironment( heartModel, "Heart.sldd", cfg, parameterSpecs);
+    ];
+%% assemble the models
+heartSubsystem = createHeartContainer(heartModel, layout);
 addNodeAssembly(heartSubsystem, nodeSpecs);
 addPathAssembly(heartSubsystem, pathSpecs);
 addElectrodeAssembly(heartSubsystem, electrodeSpecs);
 addJointAssembly(heartSubsystem, nodeNames, jointTags, layout, settings);
 addControlInputs(heartSubsystem, layout);
 addOutputs(heartSubsystem, nodeSpecs, electrodeSpecs, nodeCount, pathCount, layout);
+%%  link the dictionary to the model
+attachDict(heartModel, settings.dictPath)
+%%save parameters to the model workspace;
+mdlWks=get_param(heartModel,"ModelWorkspace");
+assignParameters(mdlWks,parameterSpecs)
 
 if settings.standalone
-   addStandaloneIo(heartModel, heartSubsystem, layout);
+    addStandaloneIo(heartModel, heartSubsystem, layout);
+    assignin(mdlWks,"cfg",settings.cfg);
 end
 
 if strlength(settings.systemPath) > 0
-   save_system(heartModel, fullfile(char(settings.systemPath), heartModel));
+    save_system(heartModel, fullfile(char(settings.systemPath), heartModel));
 else
-   save_system(heartModel);
+    save_system(heartModel);
 end
 
 heart = struct( ...
-   'model', string(heartModel), ...
-   'subsystem', string(heartSubsystem), ...
-   'nodeSpecs', {nodeSpecs}, ...
-   'pathSpecs', {pathSpecs}, ...
-   'electrodeSpecs', {electrodeSpecs});
+    'model', string(heartModel), ...
+    'subsystem', string(heartSubsystem), ...
+    'nodeSpecs', {nodeSpecs}, ...
+    'pathSpecs', {pathSpecs}, ...
+    'electrodeSpecs', {electrodeSpecs});
 end
 %----------------------------------------- helper functions -----
 
 
 function validateBuildInputs(G, refmodules)
 if ~isa(G, 'graph')
-   error('buildHeart:InvalidGraph', 'G must be a MATLAB graph object.');
+    error('buildHeart:InvalidGraph', 'G must be a MATLAB graph object.');
 end
 
 if ~isstruct(refmodules) || isempty(refmodules)
-   error('buildHeart:InvalidModules', ...
-      'REFMODULES must be a non-empty struct array.');
+    error('buildHeart:InvalidModules', ...
+        'REFMODULES must be a non-empty struct array.');
 end
 
 requiredRefFields = ["module", "type", "mtype"];
 missingFields = setdiff(requiredRefFields, string(fieldnames(refmodules)));
 if ~isempty(missingFields)
-   error('buildHeart:MissingModuleFields', ...
-      'REFMODULES is missing required fields: %s', strjoin(missingFields, ', '));
+    error('buildHeart:MissingModuleFields', ...
+        'REFMODULES is missing required fields: %s', strjoin(missingFields, ', '));
 end
 
 requiredNodeVars = ["Name", "Type", "cfg", "x", "y", "z"];
 missingNodeVars = setdiff(requiredNodeVars, string(G.Nodes.Properties.VariableNames));
 if ~isempty(missingNodeVars)
-   error('buildHeart:MissingNodeVariables', ...
-      'G.Nodes is missing required variables: %s', strjoin(missingNodeVars, ', '));
+    error('buildHeart:MissingNodeVariables', ...
+        'G.Nodes is missing required variables: %s', strjoin(missingNodeVars, ', '));
 end
 
 requiredEdgeVars = "pathCfg";
 missingEdgeVars = setdiff(requiredEdgeVars, string(G.Edges.Properties.VariableNames));
 if ~isempty(missingEdgeVars)
-   error('buildHeart:MissingEdgeVariables', ...
-      'G.Edges is missing required variables: %s', strjoin(missingEdgeVars, ', '));
+    error('buildHeart:MissingEdgeVariables', ...
+        'G.Edges is missing required variables: %s', strjoin(missingEdgeVars, ', '));
 end
 end
 
@@ -264,25 +226,25 @@ apTargets = upper(string(settings.apTargetNodes(:)));
 apTargets = apTargets(strlength(apTargets) > 0);
 missingAp = setdiff(unique(apTargets), unique(available));
 if ~isempty(missingAp)
-   warning('buildHeart:MissingApTargetNodes', ...
-      'AP target node(s) not found in G.Nodes.Name: %s', strjoin(cellstr(missingAp), ', '));
+    warning('buildHeart:MissingApTargetNodes', ...
+        'AP target node(s) not found in G.Nodes.Name: %s', strjoin(cellstr(missingAp), ', '));
 end
 
 vpTargets = upper(string(settings.vpTargetNodes(:)));
 vpTargets = vpTargets(strlength(vpTargets) > 0);
 missingVp = setdiff(unique(vpTargets), unique(available));
 if ~isempty(missingVp)
-   warning('buildHeart:MissingVpTargetNodes', ...
-      'VP target node(s) not found in G.Nodes.Name: %s', strjoin(cellstr(missingVp), ', '));
+    warning('buildHeart:MissingVpTargetNodes', ...
+        'VP target node(s) not found in G.Nodes.Name: %s', strjoin(cellstr(missingVp), ', '));
 end
 end
 
 function moduleRefs = normalizeModules(refmodules)
 moduleRefs = refmodules;
 for idx = 1:numel(moduleRefs)
-   moduleRefs(idx).module = string(moduleRefs(idx).module);
-   moduleRefs(idx).type = lower(string(moduleRefs(idx).type));
-   moduleRefs(idx).mtype = upper(string(moduleRefs(idx).mtype));
+    moduleRefs(idx).module = string(moduleRefs(idx).module);
+    moduleRefs(idx).type = lower(string(moduleRefs(idx).type));
+    moduleRefs(idx).mtype = upper(string(moduleRefs(idx).mtype));
 end
 end
 
@@ -308,57 +270,57 @@ pathCount = numedges(G);
 dipoles = cell(pathCount, 1);
 
 if ismember("dipole", edgeVars)
-   dipoles = G.Edges.dipole;
-   return
+    dipoles = G.Edges.dipole;
+    return
 end
 
 for pathIdx = 1:pathCount
-   dipoles{pathIdx} = struct( ...
-      'xi', G.Nodes.x(startIdx(pathIdx)), ...
-      'yi', G.Nodes.y(startIdx(pathIdx)), ...
-      'zi', G.Nodes.z(startIdx(pathIdx)), ...
-      'xj', G.Nodes.x(endIdx(pathIdx)), ...
-      'yj', G.Nodes.y(endIdx(pathIdx)), ...
-      'zj', G.Nodes.z(endIdx(pathIdx)), ...
-      'C', G.Edges.Weight(pathIdx));
+    dipoles{pathIdx} = struct( ...
+        'xi', G.Nodes.x(startIdx(pathIdx)), ...
+        'yi', G.Nodes.y(startIdx(pathIdx)), ...
+        'zi', G.Nodes.z(startIdx(pathIdx)), ...
+        'xj', G.Nodes.x(endIdx(pathIdx)), ...
+        'yj', G.Nodes.y(endIdx(pathIdx)), ...
+        'zj', G.Nodes.z(endIdx(pathIdx)), ...
+        'C', G.Edges.Weight(pathIdx));
 end
 end
 
 function layout = getLayout()
 layout = struct( ...
-   'topMargin', 30, ...
-   'leftMargin', 110, ...
-   'nodeSpacing', 125, ...
-   'pathSpacing', 130, ...
-   'tagSpacing', 26, ...
-   'tagLength', 110, ...
-   'tagWidth', 24, ...
-   'containerSize', [260, 420], ...
-   'nodeSize', [100, 72], ...
-   'pathSize', [190, 96], ...
-   'electrodeSize', [190, 96], ...
-   'pathColumnOffset', 390, ...
-   'electrodeColumnOffset', 900, ...
-   'jointColumnOffset', 1380, ...
-   'configColumnOffset', 1780, ...
-   'outputColumnOffset', 2200);
+    'topMargin', 30, ...
+    'leftMargin', 110, ...
+    'nodeSpacing', 125, ...
+    'pathSpacing', 130, ...
+    'tagSpacing', 26, ...
+    'tagLength', 110, ...
+    'tagWidth', 24, ...
+    'containerSize', [260, 420], ...
+    'nodeSize', [100, 72], ...
+    'pathSize', [190, 96], ...
+    'electrodeSize', [190, 96], ...
+    'pathColumnOffset', 390, ...
+    'electrodeColumnOffset', 900, ...
+    'jointColumnOffset', 1380, ...
+    'configColumnOffset', 1780, ...
+    'outputColumnOffset', 2200);
 end
 
 function tf = canUseParallel(nodeCount, pathCount)
 if nargin < 2
-   nodeCount = 0;
-   pathCount = 0;
+    nodeCount = 0;
+    pathCount = 0;
 end
 
 % Avoid parfor startup overhead for small builds.
 minWorkItems = 120;
 workItems = nodeCount + 2 * pathCount;
 tf = workItems >= minWorkItems && ...
-   license('test', 'Distrib_Computing_Toolbox') && ...
-   ~isempty(ver('parallel'));
+    license('test', 'Distrib_Computing_Toolbox') && ...
+    ~isempty(ver('parallel'));
 end
 
-function spec = makeNodeSpec(nodeIdx, nodeName, nodeType, nodeCfg, moduleRefs, layout)
+function spec = makeNodeSpec(nodeIdx, nodeName, nodeType, moduleRefs, layout)
 spec = struct;
 spec.index = nodeIdx;
 spec.name = char(nodeName);
@@ -366,16 +328,14 @@ spec.blockName = makeValidBlockName(nodeName);
 spec.type = char(nodeType);
 spec.module = resolveModule(moduleRefs, "node", nodeType);
 spec.position = blockPosition(layout.leftMargin, layout.topMargin + ...
-   (nodeIdx - 1) * layout.nodeSpacing, layout.nodeSize);
+    (nodeIdx - 1) * layout.nodeSpacing, layout.nodeSize);
 spec.cellTag = sprintf('c_%s', spec.name);
 spec.pathTag = sprintf('gv_%s', spec.name);
-spec.cfg = nodeCfg;
 spec.cfgBusBlockName = sprintf('cfg_%s', spec.name);
 spec.cfgBusElement = spec.name;
-spec.parameterBindings = nodeParameterBindings(nodeType, nodeName, nodeCfg);
 end
 
-function spec = makePathSpec(pathIdx, startNodeIdx, endNodeIdx, nodeNames, nodeCoordinates, pathCfg, moduleRefs, layout)
+function spec = makePathSpec(pathIdx, startNodeIdx, endNodeIdx, nodeNames, nodeCoordinates, moduleRefs, layout)
 spec = struct;
 spec.index = pathIdx;
 spec.startNodeIdx = startNodeIdx;
@@ -386,8 +346,7 @@ spec.name = sprintf('%s_%s', spec.startNodeName, spec.endNodeName);
 spec.blockName = makeValidBlockName(spec.name);
 spec.module = resolveModule(moduleRefs, "path", "straightLine");
 spec.position = blockPosition(layout.leftMargin + layout.pathColumnOffset, ...
-   layout.topMargin + (pathIdx - 1) * layout.pathSpacing, layout.pathSize);
-spec.pathCfg = pathCfg;
+    layout.topMargin + (pathIdx - 1) * layout.pathSpacing, layout.pathSize);
 pathVector = nodeCoordinates(startNodeIdx, :) - nodeCoordinates(endNodeIdx, :);
 pathLength = sqrt(sum(pathVector .^ 2));
 spec.pathLength = pathLength;
@@ -400,7 +359,7 @@ spec.cellITagName_block = sprintf('c_%s_%d', spec.startNodeName,pathIdx);
 spec.cellJTagName_block = sprintf('c_%s_%d',spec.endNodeName,pathIdx);
 spec.cfgBusBlockName = sprintf('cfgPath_%d_%d', startNodeIdx, endNodeIdx);
 spec.cfgBusElement = sprintf('path_%d', pathIdx);
-spec.parameterBindings = pathParameterBindings(pathIdx, pathCfg, pathLength);
+spec.parameterBindings = pathParameterBindings(pathIdx, pathLength);
 end
 
 function spec = makeElectrodeSpec(pathIdx, pathSpec, dipole, moduleRefs, layout)
@@ -410,7 +369,7 @@ spec.name = sprintf('%s_probe', pathSpec.name);
 spec.blockName = makeValidBlockName(spec.name);
 spec.module = resolveModule(moduleRefs, "electrode", "straightLine");
 spec.position = blockPosition(layout.leftMargin + layout.electrodeColumnOffset, ...
-   layout.topMargin + (pathIdx - 1) * layout.pathSpacing, layout.electrodeSize);
+    layout.topMargin + (pathIdx - 1) * layout.pathSpacing, layout.electrodeSize);
 spec.pathTag = pathSpec.probeTag;
 spec.egmTag = sprintf('EGM_%d', pathIdx);
 spec.waveTag = sprintf('w_%d', pathIdx);
@@ -418,73 +377,8 @@ spec.dipole = dipole;
 spec.parameterBindings = electrodeParameterBindings(pathIdx, dipole);
 end
 
-function attachHeartEnvironment(heartModel, dictPath,cfg, parameterSpecs)
-load_system(heartModel);
-dictPath = resolveHeartDictionaryPath(dictPath);
-closeShadowingDictionariesForTarget(dictPath);
-ensureDictionaryReferences(dictPath);
-[dictFolder, dictName, dictExt] = fileparts(dictPath);
-if strlength(string(dictFolder)) > 0
-   addpath(dictFolder);
-end
-dictRef = string(strcat(dictName, dictExt));
-%% Attach dictionary
-set_param(...
-    heartModel,...
-    "DataDictionary",...
-   dictRef);
-%% Model workspace
-mdlWks=get_param(...
-    heartModel,...
-    "ModelWorkspace");
-assignin(...
-    mdlWks,...
-    "cfg",...
-    cfg);
-%% Assign parameters
-for i=1:numel(parameterSpecs)
-    assignParameterBindings(...
-        mdlWks,...
-        parameterSpecs{i}.parameterBindings);
-
-end
-end
-
-function assignParameterBindings(mdlWks,bindings)
-
-for i=1:numel(bindings)
-    name=bindings(i).variableName;
-    if ~isvarname(name)
-        error(...
-            "Invalid variable name %s",...
-            name);
-    end
-
-    assignin(...
-        mdlWks,...
-        name,...
-        bindings(i).value);
-
-end
-end
-
-function bindings = nodeParameterBindings(nodeType, nodeName, nodeCfg)
-switch nodeType
-    case 'N'
-        bindings = makeParameterBinding ('cfg_default_N',sprintf('cfg_%s',nodeName),nodeCfg);
-    case 'M'
-        bindings = makeParameterBinding ('cfg_default_M',sprintf('cfg_%s',nodeName),nodeCfg);
-    case 'NM'
-        bindings (1) = makeParameterBinding ('cfg_default_N',sprintf('cfg_%s_N',nodeName),nodeCfg);
-        bindings (2) = makeParameterBinding('cfg_default_M',sprintf('cfg_%s_M',nodeName),nodeCfg);
-end
-end
-
-function bindings = pathParameterBindings(pathIdx, pathCfg, pathLength)
-
-bindings(1)= makeParameterBinding('cvij',sprintf('cvij_%d',pathIdx),pathCfg.CVi2j);
-bindings(2)= makeParameterBinding('cvji',sprintf('cvji_%d',pathIdx),pathCfg.CVj2i);
-bindings(3)= makeParameterBinding('l',sprintf('l_%d',pathIdx),pathLength);
+function bindings = pathParameterBindings(pathIdx, pathLength)
+bindings(1)= makeParameterBinding('l',sprintf('l_%d',pathIdx),pathLength);
 end
 
 function bindings = electrodeParameterBindings(pathIdx, dipole)
@@ -505,17 +399,52 @@ end
 
 function binding = makeParameterBinding(parameterName, variableName, value)
 binding = struct( ...
-   'parameterName', char(parameterName), ...
-   'variableName', char(variableName), ...
-   'value', value);
+    'parameterName', char(parameterName), ...
+    'variableName', char(variableName), ...
+    'value', value);
 end
 
 function jointTags = buildJointTags(pathSpecs, nodeCount)
 jointTags = cell(nodeCount, 1);
 for pathIdx = 1:numel(pathSpecs)
-   spec = pathSpecs{pathIdx};
-   jointTags{spec.startNodeIdx} = [jointTags{spec.startNodeIdx}; {spec.reverseTag}];
-   jointTags{spec.endNodeIdx} = [jointTags{spec.endNodeIdx}; {spec.forwardTag}];
+    spec = pathSpecs{pathIdx};
+    jointTags{spec.startNodeIdx} = [jointTags{spec.startNodeIdx}; {spec.reverseTag}];
+    jointTags{spec.endNodeIdx} = [jointTags{spec.endNodeIdx}; {spec.forwardTag}];
+end
+end
+
+function configHeartModel(heartModel,moduleRefs,settings)
+configTemplateModel = "";
+if isfield(settings, 'configTemplateModel') && strlength(string(settings.configTemplateModel)) > 0
+    configTemplateModel = string(settings.configTemplateModel);
+else
+    for moduleIdx = 1:numel(moduleRefs)
+        candidate = modelNameFromSource(moduleRefs(moduleIdx).module);
+        if strlength(candidate) == 0
+            candidate = stripFileExtension(moduleRefs(moduleIdx).module);
+        end
+
+        if strlength(candidate) == 0 || strcmpi(char(candidate), heartModel)
+            continue;
+        end
+
+        if bdIsLoaded(char(candidate)) || exist(sprintf('%s.slx', char(candidate)), 'file') || ...
+                exist(sprintf('%s.mdl', char(candidate)), 'file')
+            configTemplateModel = candidate;
+            break;
+        end
+    end
+end
+
+if strlength(configTemplateModel) > 0
+    load_system(char(configTemplateModel));
+    srcCs = getActiveConfigSet(char(configTemplateModel));
+    newCs = copy(srcCs);
+    attachConfigSet(heartModel, newCs, true);
+    setActiveConfigSet(heartModel, get_param(newCs, 'Name'));
+else
+    warning('buildHeart:MissingConfigTemplateModel', ...
+        'No config template model found. Using default config set for %s.', heartModel);
 end
 end
 
@@ -523,7 +452,7 @@ function heartSubsystem = createHeartContainer(heartModel, layout)
 blockName = sprintf('%s/Heart', heartModel);
 add_block('simulink/Ports & Subsystems/Subsystem', blockName);
 set_param(blockName, 'Position', blockPosition(layout.leftMargin, ...
-   layout.topMargin, layout.containerSize));
+    layout.topMargin, layout.containerSize));
 
 heartSubsystem = sprintf('%s/Heart', heartModel);
 delete_line(heartSubsystem, 'In1/1', 'Out1/1');
@@ -532,199 +461,185 @@ delete_block(sprintf('%s/Out1', heartSubsystem));
 end
 
 function addNodeAssembly(heartSubsystem, nodeSpecs)
-nonvirtualPathNodes = ["BH_His_p"];
 for idx = 1:numel(nodeSpecs)
-   spec = nodeSpecs{idx};
-   blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
-   addModuleBlock(spec.module, blockPath);
-   set_param(blockPath, 'Position', spec.position);
-   applyParameterBindingsToBlock(blockPath, spec.parameterBindings);
+    spec = nodeSpecs{idx};
+    blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
+    addModuleBlock(spec.module, blockPath);
+    set_param(blockPath, 'Position', spec.position);
+    addConfigBusElementBlock(heartSubsystem, spec.cfgBusBlockName, spec.cfgBusElement, spec.position, 2, 1, ...
+        spec.blockName, 1);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', spec.blockName));
 
-   addConfigBusElementBlock(heartSubsystem, spec.cfgBusBlockName, spec.cfgBusElement, spec.position, 2, 1, ...
-      spec.blockName, 1);
-   addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', spec.blockName));
+    addGotoBlock(heartSubsystem, spec.cellTag, spec.cellTag, spec.position, 1, 1, true);
 
-   addGotoBlock(heartSubsystem, spec.cellTag, spec.cellTag, spec.position, 1, 1, true);
+    cellGotoPath = sprintf('%s/%s', heartSubsystem, spec.cellTag);
+    gotoPos = get_param(cellGotoPath, 'Position');
+    gotoShift = 45;
+    set_param(cellGotoPath, 'Position', [gotoPos(1) + gotoShift, gotoPos(2), ...
+        gotoPos(3) + gotoShift, gotoPos(4)]);
 
-   cellGotoPath = sprintf('%s/%s', heartSubsystem, spec.cellTag);
-   gotoPos = get_param(cellGotoPath, 'Position');
-   gotoShift = 45;
-   set_param(cellGotoPath, 'Position', [gotoPos(1) + gotoShift, gotoPos(2), ...
-      gotoPos(3) + gotoShift, gotoPos(4)]);
+    delayName = sprintf('CellDelay_%s', spec.blockName);
+    delayPath = sprintf('%s/%s', heartSubsystem, delayName);
+    add_block('simulink/Discrete/Unit Delay', delayPath);
+    set_param(delayPath, 'Position', [gotoPos(1), gotoPos(2), gotoPos(1) + 30, gotoPos(4)], ...
+        'ShowName', 'off');
 
-   delayName = sprintf('CellDelay_%s', spec.blockName);
-   delayPath = sprintf('%s/%s', heartSubsystem, delayName);
-   add_block('simulink/Discrete/Unit Delay', delayPath);
-   set_param(delayPath, 'Position', [gotoPos(1), gotoPos(2), gotoPos(1) + 30, gotoPos(4)], ...
-      'ShowName', 'off');
-
-   addLineSafe(heartSubsystem, sprintf('%s/1', spec.blockName), sprintf('%s/1', delayName));
-   addLineSafe(heartSubsystem, sprintf('%s/1', delayName), sprintf('%s/1', spec.cellTag));
-
-   if ismember(string(spec.blockName), nonvirtualPathNodes)
-      pathAdapterName = sprintf('PathIn_%s', spec.blockName);
-      addNodePathInputAdapter(heartSubsystem, pathAdapterName, spec.position, spec.blockName, 2);
-
-      addFromBlock(heartSubsystem, spec.pathTag, spec.pathTag, spec.position, 2, 2, 1, ...
-         pathAdapterName, 1);
-      addLineSafe(heartSubsystem, sprintf('%s/1', spec.pathTag), sprintf('%s/1', pathAdapterName));
-      addLineSafe(heartSubsystem, sprintf('%s/1', pathAdapterName), sprintf('%s/2', spec.blockName));
-   else
-      addFromBlock(heartSubsystem, spec.pathTag, spec.pathTag, spec.position, 2, 2, 2, ...
-         spec.blockName, 2);
-      addLineSafe(heartSubsystem, sprintf('%s/1', spec.pathTag), sprintf('%s/2', spec.blockName));
-   end
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.blockName), sprintf('%s/1', delayName));
+    addLineSafe(heartSubsystem, sprintf('%s/1', delayName), sprintf('%s/1', spec.cellTag));
+    addFromBlock(heartSubsystem, spec.pathTag, spec.pathTag, spec.position, 2, 2, 2, ...
+        spec.blockName, 2);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.pathTag), sprintf('%s/2', spec.blockName));
 end
 end
 
 function addPathAssembly(heartSubsystem, pathSpecs)
 for idx = 1:numel(pathSpecs)
-   spec = pathSpecs{idx};
-   blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
-   addModuleBlock(spec.module, blockPath);
-   set_param(blockPath, 'Position', spec.position);
-   applyParameterBindingsToBlock(blockPath, spec.parameterBindings);
+    spec = pathSpecs{idx};
+    blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
+    addModuleBlock(spec.module, blockPath);
+    set_param(blockPath, 'Position', spec.position);
+    applyParameterBindingsToBlock(blockPath, spec.parameterBindings);
 
-   addConfigBusElementBlock(heartSubsystem, spec.cfgBusBlockName, spec.cfgBusElement, spec.position, 3, 1, ...
-      spec.blockName, 1);
-   addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', spec.blockName));
+    addConfigBusElementBlock(heartSubsystem, spec.cfgBusBlockName, spec.cfgBusElement, spec.position, 3, 1, ...
+        spec.blockName, 1);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', spec.blockName));
 
-   addGotoBlock(heartSubsystem, spec.reverseTag, spec.reverseTag, spec.position, 3, 1, true);
-   addLineSafe(heartSubsystem, sprintf('%s/1', spec.blockName), sprintf('%s/1', spec.reverseTag));
+    addGotoBlock(heartSubsystem, spec.reverseTag, spec.reverseTag, spec.position, 3, 1, true);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.blockName), sprintf('%s/1', spec.reverseTag));
 
-   addGotoBlock(heartSubsystem, spec.forwardTag, spec.forwardTag, spec.position, 3, 2, true);
-   addLineSafe(heartSubsystem, sprintf('%s/2', spec.blockName), sprintf('%s/1', spec.forwardTag));
+    addGotoBlock(heartSubsystem, spec.forwardTag, spec.forwardTag, spec.position, 3, 2, true);
+    addLineSafe(heartSubsystem, sprintf('%s/2', spec.blockName), sprintf('%s/1', spec.forwardTag));
 
-   addGotoBlock(heartSubsystem, spec.probeTag, spec.probeTag, spec.position, 3, 3, true);
-   addLineSafe(heartSubsystem, sprintf('%s/3', spec.blockName), sprintf('%s/1', spec.probeTag));
+    addGotoBlock(heartSubsystem, spec.probeTag, spec.probeTag, spec.position, 3, 3, true);
+    addLineSafe(heartSubsystem, sprintf('%s/3', spec.blockName), sprintf('%s/1', spec.probeTag));
 
-   addFromBlock(heartSubsystem, spec.cellITagName_block, spec.cellITagName, ...
-      spec.position, 3, 2, 2, spec.blockName, 2);
-   addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellITagName_block), sprintf('%s/2', spec.blockName));
+    addFromBlock(heartSubsystem, spec.cellITagName_block, spec.cellITagName, ...
+        spec.position, 3, 2, 2, spec.blockName, 2);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellITagName_block), sprintf('%s/2', spec.blockName));
 
-   addFromBlock(heartSubsystem, spec.cellJTagName_block, spec.cellJTagName,...
-      spec.position, 3, 3, 3, spec.blockName, 3);
-   addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellJTagName_block), sprintf('%s/3', spec.blockName));
+    addFromBlock(heartSubsystem, spec.cellJTagName_block, spec.cellJTagName,...
+        spec.position, 3, 3, 3, spec.blockName, 3);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellJTagName_block), sprintf('%s/3', spec.blockName));
 end
 end
 
 function addElectrodeAssembly(heartSubsystem, electrodeSpecs)
 for idx = 1:numel(electrodeSpecs)
-   spec = electrodeSpecs{idx};
-   blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
-   addModuleBlock(spec.module, blockPath);
-   set_param(blockPath, 'Position', spec.position);
+    spec = electrodeSpecs{idx};
+    blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
+    addModuleBlock(spec.module, blockPath);
+    set_param(blockPath, 'Position', spec.position);
+    applyParameterBindingsToBlock(blockPath, spec.parameterBindings); 
+    addFromBlock(heartSubsystem, sprintf('FromPath_%d', spec.index), spec.pathTag, ...
+        spec.position, 2, 1, 1, spec.blockName, 1);
+    addLineSafe(heartSubsystem, sprintf('FromPath_%d/1', spec.index), sprintf('%s/1', spec.blockName));
 
-   addFromBlock(heartSubsystem, sprintf('FromPath_%d', spec.index), spec.pathTag, ...
-      spec.position, 2, 1, 1, spec.blockName, 1);
-   addLineSafe(heartSubsystem, sprintf('FromPath_%d/1', spec.index), sprintf('%s/1', spec.blockName));
-
-   addFromBlock(heartSubsystem, sprintf('Leads_%d', spec.index), 'Leads', ...
-      spec.position, 2, 2, 2, spec.blockName, 2);
-   addLineSafe(heartSubsystem, sprintf('Leads_%d/1', spec.index), sprintf('%s/2', spec.blockName));
+    addFromBlock(heartSubsystem, sprintf('Leads_%d', spec.index), 'Leads', ...
+        spec.position, 2, 2, 2, spec.blockName, 2);
+    addLineSafe(heartSubsystem, sprintf('Leads_%d/1', spec.index), sprintf('%s/2', spec.blockName));
 end
 end
 
 function addJointAssembly(heartSubsystem, nodeNames, jointTags, layout, settings)
 orTop = 0;
 for nodeIdx = 1:numel(jointTags)
-   nodeTagList = jointTags{nodeIdx};
-   nodeName = string(nodeNames(nodeIdx));
-   isApNode = ismember(upper(nodeName), upper(settings.apTargetNodes));
-   isVpNode = ismember(upper(nodeName), upper(settings.vpTargetNodes));
-   extraInputs = double(isApNode) + double(isVpNode);
-   totalInputs = numel(nodeTagList) + extraInputs;
+    nodeTagList = jointTags{nodeIdx};
+    nodeName = string(nodeNames(nodeIdx));
+    isApNode = ismember(upper(nodeName), upper(settings.apTargetNodes));
+    isVpNode = ismember(upper(nodeName), upper(settings.vpTargetNodes));
+    extraInputs = double(isApNode) + double(isVpNode);
+    totalInputs = numel(nodeTagList) + extraInputs;
 
-   left = layout.leftMargin + layout.jointColumnOffset;
-   top = layout.topMargin + orTop;
-   orTop = orTop + layout.tagSpacing * max(totalInputs, 1) + 15;
+    left = layout.leftMargin + layout.jointColumnOffset;
+    top = layout.topMargin + orTop;
+    orTop = orTop + layout.tagSpacing * max(totalInputs, 1) + 15;
 
-   pathGotoName = sprintf('Path%d', nodeIdx);
-   pathGotoPath = sprintf('%s/%s', heartSubsystem, pathGotoName);
-   add_block('simulink/Signal Routing/Goto', pathGotoPath);
+    pathGotoName = sprintf('Path%d', nodeIdx);
+    pathGotoPath = sprintf('%s/%s', heartSubsystem, pathGotoName);
+    add_block('simulink/Signal Routing/Goto', pathGotoPath);
 
-   sumBlockName = sprintf('Node%d_OR', nodeIdx);
-   sumBlockPath = sprintf('%s/%s', heartSubsystem, sumBlockName);
-   sumLeft = left + layout.tagLength + 20;
-   pathGotoLeft = sumLeft + layout.tagWidth + 25;
+    sumBlockName = sprintf('Node%d_OR', nodeIdx);
+    sumBlockPath = sprintf('%s/%s', heartSubsystem, sumBlockName);
+    sumLeft = left + layout.tagLength + 20;
+    pathGotoLeft = sumLeft + layout.tagWidth + 25;
 
-   if totalInputs > 1
-      centerY = top + (layout.tagSpacing * totalInputs / 2) - 10;
-      add_block('simulink/Math Operations/Sum', sumBlockPath);
-      set_param(sumBlockPath, 'Inputs', num2str(totalInputs), ...
-         'Position', [sumLeft, centerY, sumLeft + layout.tagWidth, centerY + layout.tagWidth]);
-      nodeGotoTag = sprintf('gv_%s', makeValidBlockName(nodeName));
-      set_param(pathGotoPath, 'Position', [pathGotoLeft, centerY, pathGotoLeft + layout.tagLength, centerY + layout.tagWidth], ...
-         'GotoTag', nodeGotoTag, 'ShowName', 'off');
-   else
-      centerY = top;
-      nodeGotoTag = sprintf('gv_%s', makeValidBlockName(nodeName));
-      set_param(pathGotoPath, 'Position', [pathGotoLeft, centerY, pathGotoLeft + layout.tagLength, centerY + layout.tagWidth], ...
-         'GotoTag', nodeGotoTag, 'ShowName', 'off');
-   end
+    if totalInputs > 1
+        centerY = top + (layout.tagSpacing * totalInputs / 2) - 10;
+        add_block('simulink/Math Operations/Sum', sumBlockPath);
+        set_param(sumBlockPath, 'Inputs', num2str(totalInputs), ...
+            'Position', [sumLeft, centerY, sumLeft + layout.tagWidth, centerY + layout.tagWidth]);
+        nodeGotoTag = sprintf('gv_%s', makeValidBlockName(nodeName));
+        set_param(pathGotoPath, 'Position', [pathGotoLeft, centerY, pathGotoLeft + layout.tagLength, centerY + layout.tagWidth], ...
+            'GotoTag', nodeGotoTag, 'ShowName', 'off');
+    else
+        centerY = top;
+        nodeGotoTag = sprintf('gv_%s', makeValidBlockName(nodeName));
+        set_param(pathGotoPath, 'Position', [pathGotoLeft, centerY, pathGotoLeft + layout.tagLength, centerY + layout.tagWidth], ...
+            'GotoTag', nodeGotoTag, 'ShowName', 'off');
+    end
 
-   inputPort = 1;
-   directSource = "";
-   for tagIdx = 1:numel(nodeTagList)
-      fromName = sprintf('Cell%d_%d', nodeIdx, tagIdx);
-      fromPath = sprintf('%s/%s', heartSubsystem, fromName);
-      add_block('simulink/Signal Routing/From', fromPath);
-      set_param(fromPath, 'GotoTag', nodeTagList{tagIdx}, 'ShowName', 'off', ...
-         'Position', [left, top + (tagIdx - 1) * layout.tagSpacing, ...
-         left + layout.tagLength, top + (tagIdx - 1) * layout.tagSpacing + layout.tagWidth]);
+    inputPort = 1;
+    directSource = "";
+    for tagIdx = 1:numel(nodeTagList)
+        fromName = sprintf('Cell%d_%d', nodeIdx, tagIdx);
+        fromPath = sprintf('%s/%s', heartSubsystem, fromName);
+        add_block('simulink/Signal Routing/From', fromPath);
+        set_param(fromPath, 'GotoTag', nodeTagList{tagIdx}, 'ShowName', 'off', ...
+            'Position', [left, top + (tagIdx - 1) * layout.tagSpacing, ...
+            left + layout.tagLength, top + (tagIdx - 1) * layout.tagSpacing + layout.tagWidth]);
 
-      if totalInputs > 1
-         addLineSafe(heartSubsystem, sprintf('%s/1', fromName), sprintf('%s/%d', sumBlockName, inputPort));
-      else
-         directSource = sprintf('%s/1', fromName);
-      end
-      inputPort = inputPort + 1;
-   end
+        if totalInputs > 1
+            addLineSafe(heartSubsystem, sprintf('%s/1', fromName), sprintf('%s/%d', sumBlockName, inputPort));
+        else
+            directSource = sprintf('%s/1', fromName);
+        end
+        inputPort = inputPort + 1;
+    end
 
-   pacingOffset = numel(nodeTagList);
-   if isApNode
-      [directSource, inputPort] = addPacingSource(heartSubsystem, 'AP', nodeIdx, left, top, ...
-         pacingOffset, layout, totalInputs, sumBlockName, inputPort, directSource);
-      pacingOffset = pacingOffset + 1;
-   end
-   if isVpNode
-      if totalInputs > 1
-         addPacingSource(heartSubsystem, 'VP', nodeIdx, left, top, ...
+    pacingOffset = numel(nodeTagList);
+    if isApNode
+        [directSource, inputPort] = addPacingSource(heartSubsystem, 'AP', nodeIdx, left, top, ...
             pacingOffset, layout, totalInputs, sumBlockName, inputPort, directSource);
-      else
-         [directSource, ~] = addPacingSource(heartSubsystem, 'VP', nodeIdx, left, top, ...
-            pacingOffset, layout, totalInputs, sumBlockName, inputPort, directSource);
-      end
-   end
+        pacingOffset = pacingOffset + 1;
+    end
+    if isVpNode
+        if totalInputs > 1
+            addPacingSource(heartSubsystem, 'VP', nodeIdx, left, top, ...
+                pacingOffset, layout, totalInputs, sumBlockName, inputPort, directSource);
+        else
+            [directSource, ~] = addPacingSource(heartSubsystem, 'VP', nodeIdx, left, top, ...
+                pacingOffset, layout, totalInputs, sumBlockName, inputPort, directSource);
+        end
+    end
 
-   if totalInputs > 1
-      addLineSafe(heartSubsystem, sprintf('%s/1', sumBlockName), sprintf('%s/1', pathGotoName));
-   elseif totalInputs == 1
-      addLineSafe(heartSubsystem, char(directSource), sprintf('%s/1', pathGotoName));
-   else
-      zeroName = sprintf('PathZero_%d', nodeIdx);
-      zeroPath = sprintf('%s/%s', heartSubsystem, zeroName);
-      add_block('simulink/Sources/Constant', zeroPath);
-      set_param(zeroPath, 'Value', '0', 'ShowName', 'off', ...
-         'Position', [left, top, left + 20, top + layout.tagWidth]);
-      addLineSafe(heartSubsystem, sprintf('%s/1', zeroName), sprintf('%s/1', pathGotoName));
-   end
+    if totalInputs > 1
+        addLineSafe(heartSubsystem, sprintf('%s/1', sumBlockName), sprintf('%s/1', pathGotoName));
+    elseif totalInputs == 1
+        addLineSafe(heartSubsystem, char(directSource), sprintf('%s/1', pathGotoName));
+    else
+        zeroName = sprintf('PathZero_%d', nodeIdx);
+        zeroPath = sprintf('%s/%s', heartSubsystem, zeroName);
+        add_block('simulink/Sources/Constant', zeroPath);
+        set_param(zeroPath, 'Value', '0', 'ShowName', 'off', ...
+            'Position', [left, top, left + 20, top + layout.tagWidth]);
+        addLineSafe(heartSubsystem, sprintf('%s/1', zeroName), sprintf('%s/1', pathGotoName));
+    end
 end
 end
 
 function [directSource, inputPort] = addPacingSource(heartSubsystem, pacingTag, nodeIdx, left, top, ...
-   baseInputCount, layout, totalInputs, sumBlockName, inputPort, directSource)
+    baseInputCount, layout, totalInputs, sumBlockName, inputPort, directSource)
 fromName = sprintf('%s_%d', pacingTag, nodeIdx);
 fromPath = sprintf('%s/%s', heartSubsystem, fromName);
 add_block('simulink/Signal Routing/From', fromPath);
 set_param(fromPath, 'GotoTag', pacingTag, 'ShowName', 'off', ...
-   'Position', [left, top + baseInputCount * layout.tagSpacing, ...
-   left + layout.tagLength, top + baseInputCount * layout.tagSpacing + layout.tagWidth]);
+    'Position', [left, top + baseInputCount * layout.tagSpacing, ...
+    left + layout.tagLength, top + baseInputCount * layout.tagSpacing + layout.tagWidth]);
 
 if totalInputs > 1
-   addLineSafe(heartSubsystem, sprintf('%s/1', fromName), sprintf('%s/%d', sumBlockName, inputPort));
+    addLineSafe(heartSubsystem, sprintf('%s/1', fromName), sprintf('%s/%d', sumBlockName, inputPort));
 else
-   directSource = sprintf('%s/1', fromName);
+    directSource = sprintf('%s/1', fromName);
 end
 inputPort = inputPort + 1;
 end
@@ -735,19 +650,19 @@ left = layout.leftMargin + layout.configColumnOffset;
 leadsGoto = sprintf('%s/Leads', heartSubsystem);
 add_block('simulink/Signal Routing/Goto', leadsGoto);
 set_param(leadsGoto, 'Position', [left + 20, layout.topMargin + 20, left + 20 + layout.tagLength, layout.topMargin + 20 + layout.tagWidth], ...
-   'GotoTag', 'Leads', 'ShowName', 'off');
+    'GotoTag', 'Leads', 'ShowName', 'off');
 
 cfgLeads = sprintf('%s/cfgLeads', heartSubsystem);
 existingCfgBlocks = find_system(heartSubsystem, 'SearchDepth', 1, 'Regexp', 'on', 'Name', '^cfg_');
 if isempty(existingCfgBlocks)
-   add_block('simulink/Ports & Subsystems/In Bus Element', cfgLeads, ...
-      'PortName', 'cfg', 'Element', 'Leads');
+    add_block('simulink/Ports & Subsystems/In Bus Element', cfgLeads, ...
+        'PortName', 'cfg', 'Element', 'Leads');
 else
-   add_block(existingCfgBlocks{1}, cfgLeads, 'MakeNameUnique', 'off');
-   set_param(cfgLeads, 'Element', 'Leads');
+    add_block(existingCfgBlocks{1}, cfgLeads, 'MakeNameUnique', 'off');
+    set_param(cfgLeads, 'Element', 'Leads');
 end
 set_param(cfgLeads, 'Position', [left - 65, layout.topMargin + 20, left - 15, layout.topMargin + 20 + layout.tagWidth], ...
-   'ShowName', 'off');
+    'ShowName', 'off');
 addLineSafe(heartSubsystem, 'cfgLeads/1', 'Leads/1');
 
 paceIn = sprintf('%s/Pace', heartSubsystem);
@@ -762,13 +677,13 @@ addLineSafe(heartSubsystem, 'Pace/1', 'Pacing/1');
 apGoto = sprintf('%s/APin', heartSubsystem);
 add_block('simulink/Signal Routing/Goto', apGoto);
 set_param(apGoto, 'Position', [left + 20, layout.topMargin + 70, left + 20 + layout.tagLength, layout.topMargin + 70 + layout.tagWidth], ...
-   'GotoTag', 'AP', 'ShowName', 'off');
+    'GotoTag', 'AP', 'ShowName', 'off');
 addLineSafe(heartSubsystem, 'Pacing/1', 'APin/1');
 
 vpGoto = sprintf('%s/VPin', heartSubsystem);
 add_block('simulink/Signal Routing/Goto', vpGoto);
 set_param(vpGoto, 'Position', [left + 20, layout.topMargin + 100, left + 20 + layout.tagLength, layout.topMargin + 100 + layout.tagWidth], ...
-   'GotoTag', 'VP', 'ShowName', 'off');
+    'GotoTag', 'VP', 'ShowName', 'off');
 addLineSafe(heartSubsystem, 'Pacing/2', 'VPin/1');
 end
 
@@ -779,111 +694,111 @@ egmsTemplateBlock = "";
 wavesTemplateBlock = "";
 
 for nodeIdx = 1:nodeCount
-   nodeSpec = nodeSpecs{nodeIdx};
-   cellTagBlockPath = sprintf('%s/%s', heartSubsystem, nodeSpec.cellTag);
-   cellTagPos = get_param(cellTagBlockPath, 'Position');
-   cellTagX = cellTagPos(1);
-   cellTagY = cellTagPos(4) + 5;
+    nodeSpec = nodeSpecs{nodeIdx};
+    cellTagBlockPath = sprintf('%s/%s', heartSubsystem, nodeSpec.cellTag);
+    cellTagPos = get_param(cellTagBlockPath, 'Position');
+    cellTagX = cellTagPos(1);
+    cellTagY = cellTagPos(4) + 5;
 
-   outBusName = sprintf('Cells_%s', nodeSpec.cellTag);
-   cellsTemplateBlock = addCellsOutputBusElement(heartSubsystem, outBusName, nodeSpec.cellTag, ...
-      cellTagX, cellTagY, cellsTemplateBlock);
-   addLineSafe(heartSubsystem, sprintf('%s/1', nodeSpec.blockName), sprintf('%s/1', outBusName));
+    outBusName = sprintf('Cells_%s', nodeSpec.cellTag);
+    cellsTemplateBlock = addCellsOutputBusElement(heartSubsystem, outBusName, nodeSpec.cellTag, ...
+        cellTagX, cellTagY, cellsTemplateBlock);
+    addLineSafe(heartSubsystem, sprintf('%s/1', nodeSpec.blockName), sprintf('%s/1', outBusName));
 end
 
 for pathIdx = 1:pathCount
-   electrodeSpec = electrodeSpecs{pathIdx};
-   y0 = electrodeSpec.position(2) + layout.tagWidth;
+    electrodeSpec = electrodeSpecs{pathIdx};
+    y0 = electrodeSpec.position(2) + layout.tagWidth;
 
-   egmOutBusName = sprintf('egms_%s', electrodeSpec.egmTag);
-   egmsTemplateBlock = addOutputBusElementBlock(heartSubsystem, egmOutBusName, 'EGMs', ...
-      electrodeSpec.egmTag, electrodeSpec.blockName, 1, left, y0 - layout.tagSpacing, egmsTemplateBlock);
-   addLineSafe(heartSubsystem, sprintf('%s/1', electrodeSpec.blockName), sprintf('%s/1', egmOutBusName));
+    egmOutBusName = sprintf('egms_%s', electrodeSpec.egmTag);
+    egmsTemplateBlock = addOutputBusElementBlock(heartSubsystem, egmOutBusName, 'EGMs', ...
+        electrodeSpec.egmTag, electrodeSpec.blockName, 1, left, y0 - layout.tagSpacing, egmsTemplateBlock);
+    addLineSafe(heartSubsystem, sprintf('%s/1', electrodeSpec.blockName), sprintf('%s/1', egmOutBusName));
 
-   outBusName = sprintf('waves_%s', electrodeSpec.waveTag);
-   wavesTemplateBlock = addOutputBusElementBlock(heartSubsystem, outBusName, 'waves', ...
-      electrodeSpec.waveTag, electrodeSpec.blockName, 2, left, y0, wavesTemplateBlock);
-   addLineSafe(heartSubsystem, sprintf('%s/2', electrodeSpec.blockName), sprintf('%s/1', outBusName));
+    outBusName = sprintf('waves_%s', electrodeSpec.waveTag);
+    wavesTemplateBlock = addOutputBusElementBlock(heartSubsystem, outBusName, 'waves', ...
+        electrodeSpec.waveTag, electrodeSpec.blockName, 2, left, y0, wavesTemplateBlock);
+    addLineSafe(heartSubsystem, sprintf('%s/2', electrodeSpec.blockName), sprintf('%s/1', outBusName));
 end
 end
 
 function templateBlockPath = addCellsOutputBusElement(heartSubsystem, blockName, elementName, ...
-   tagX, tagY, templateBlockPath)
+    tagX, tagY, templateBlockPath)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
 if strlength(templateBlockPath) == 0
-   existingOutBusBlocks = find_system(heartSubsystem, 'SearchDepth', 1, ...
-      'Regexp', 'on', 'Name', '^Cells_');
+    existingOutBusBlocks = find_system(heartSubsystem, 'SearchDepth', 1, ...
+        'Regexp', 'on', 'Name', '^Cells_');
 else
-   existingOutBusBlocks = {char(templateBlockPath)};
+    existingOutBusBlocks = {char(templateBlockPath)};
 end
 
 if isempty(existingOutBusBlocks)
-   add_block('simulink/Ports & Subsystems/Out Bus Element', blockPath, ...
-      'PortName', 'Cells', 'Element', elementName);
+    add_block('simulink/Ports & Subsystems/Out Bus Element', blockPath, ...
+        'PortName', 'Cells', 'Element', elementName);
 else
-   add_block(existingOutBusBlocks{1}, blockPath, 'MakeNameUnique', 'off');
-   set_param(blockPath, 'Element', elementName);
+    add_block(existingOutBusBlocks{1}, blockPath, 'MakeNameUnique', 'off');
+    set_param(blockPath, 'Element', elementName);
 end
 templateBlockPath = string(blockPath);
 
 tagLength = computeTagLength(sprintf('Cells.%s', elementName));
 left = tagX;
 y0 = tagY;
-y0 = y0 + busElementVerticalNudge('Cells', elementName);
+%y0 = y0 + busElementVerticalNudge('Cells', elementName);
 
 set_param(blockPath, 'Position', [left, y0, left + tagLength, y0 + 20], 'ShowName', 'off');
 end
 
 function templateBlockPath = addOutputBusElementBlock(heartSubsystem, blockName, ...
-   portName, elementName, sourceBlockName, sourcePortIndex, fallbackLeft, ...
-   fallbackY, templateBlockPath)
+    portName, elementName, sourceBlockName, sourcePortIndex, fallbackLeft, ...
+    fallbackY, templateBlockPath)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
 if strlength(templateBlockPath) == 0
-   existingOutBusBlocks = find_system(heartSubsystem, 'SearchDepth', 1, ...
-      'Regexp', 'on', 'Name', sprintf('^%s_', portName));
+    existingOutBusBlocks = find_system(heartSubsystem, 'SearchDepth', 1, ...
+        'Regexp', 'on', 'Name', sprintf('^%s_', portName));
 else
-   existingOutBusBlocks = {char(templateBlockPath)};
+    existingOutBusBlocks = {char(templateBlockPath)};
 end
 
 if isempty(existingOutBusBlocks)
-   add_block('simulink/Ports & Subsystems/Out Bus Element', blockPath, ...
-      'PortName', portName, 'Element', elementName);
+    add_block('simulink/Ports & Subsystems/Out Bus Element', blockPath, ...
+        'PortName', portName, 'Element', elementName);
 else
-   add_block(existingOutBusBlocks{1}, blockPath, 'MakeNameUnique', 'off');
-   set_param(blockPath, 'Element', elementName);
+    add_block(existingOutBusBlocks{1}, blockPath, 'MakeNameUnique', 'off');
+    set_param(blockPath, 'Element', elementName);
 end
 templateBlockPath = string(blockPath);
 
 tagLength = computeTagLength(sprintf('%s.%s', portName, elementName));
 [left, y0] = alignNearSourceOutport(heartSubsystem, sourceBlockName, sourcePortIndex, ...
-   fallbackLeft, fallbackY, 20);
+    fallbackLeft, fallbackY, 20);
 [left, y0] = shiftRightToAvoidOverlap(heartSubsystem, blockPath, left, y0, tagLength, 20);
-y0 = y0 + busElementVerticalNudge(portName, elementName);
+%y0 = y0 + busElementVerticalNudge(portName, elementName);
 set_param(blockPath, 'Position', [left, y0, left + tagLength, y0 + 20], 'ShowName', 'off');
 end
 
 function dy = busElementVerticalNudge(portName, elementName)
 key = sprintf('%s.%s', char(portName), char(elementName));
 switch key
-   case {'cfg.SA', 'cfg.path_1', 'Cells.c_SA', 'waves.w_1'}
-      dy = 5;
-   otherwise
-      dy = 0;
+    case {'cfg.SA', 'cfg.path_1', 'Cells.c_SA', 'waves.w_1'}
+        dy = 5;
+    otherwise
+        dy = 0;
 end
 end
 
 function dy = tagVerticalNudge(tagName)
 switch string(tagName)
-   case ["c_SA", "SA_a_J_SA_1"]
-      dy = 5;
-   otherwise
-      dy = 0;
+    case ["c_SA", "SA_a_J_SA_1"]
+        dy = 5;
+    otherwise
+        dy = 0;
 end
 end
 
 function addStandaloneIo(heartModel, heartSubsystem, layout)
 containerPos = [layout.leftMargin, layout.topMargin, ...
-   layout.leftMargin + layout.containerSize(1), layout.topMargin + layout.containerSize(2)];
+    layout.leftMargin + layout.containerSize(1), layout.topMargin + layout.containerSize(2)];
 heartPorts = get_param(heartSubsystem, 'PortHandles');
 
 cfgInport = [];
@@ -893,19 +808,19 @@ egmsOutport = [];
 wavesOutport = [];
 
 if isfield(heartPorts, 'Inport') && numel(heartPorts.Inport) >= 1
-   cfgInport = heartPorts.Inport(1);
+    cfgInport = heartPorts.Inport(1);
 end
 if isfield(heartPorts, 'Inport') && numel(heartPorts.Inport) >= 2
-   paceInport = heartPorts.Inport(2);
+    paceInport = heartPorts.Inport(2);
 end
 if isfield(heartPorts, 'Outport') && numel(heartPorts.Outport) >= 1
-   cellsOutport = heartPorts.Outport(1);
+    cellsOutport = heartPorts.Outport(1);
 end
 if isfield(heartPorts, 'Outport') && numel(heartPorts.Outport) >= 2
-   egmsOutport = heartPorts.Outport(2);
+    egmsOutport = heartPorts.Outport(2);
 end
 if isfield(heartPorts, 'Outport') && numel(heartPorts.Outport) >= 3
-   wavesOutport = heartPorts.Outport(3);
+    wavesOutport = heartPorts.Outport(3);
 end
 
 addTopLevelTerminator(heartModel, 'TerminatorCells', cellsOutport, containerPos(3), layout.tagWidth);
@@ -915,29 +830,29 @@ addTopLevelTerminator(heartModel, 'TerminatorWaves', wavesOutport, containerPos(
 cfgIn = sprintf('%s/cfg', heartModel);
 add_block('simulink/Sources/Constant', cfgIn);
 set_param(cfgIn, 'Position', [layout.leftMargin - 100, containerPos(2) + layout.containerSize(2) / 4, ...
-   layout.leftMargin - 50, containerPos(2) + layout.containerSize(2) / 4 + layout.tagWidth], ...
-   'Value', 'cfg',  'OutDataTypeStr', 'Bus: HeartCfgBus','ShowName', 'off');
+    layout.leftMargin - 50, containerPos(2) + layout.containerSize(2) / 4 + layout.tagWidth], ...
+    'Value', 'cfg',  'OutDataTypeStr', 'Bus: HeartCfgBus','ShowName', 'off');
 
 paceZero = sprintf('%s/PaceZero', heartModel);
 add_block('simulink/Sources/Constant', paceZero);
 set_param(paceZero, 'Position', [layout.leftMargin - 100, containerPos(2) + 3 * layout.containerSize(2) / 4, ...
-   layout.leftMargin - 50, containerPos(2) + 3 * layout.containerSize(2) / 4 + layout.tagWidth], ...
-   'Value', '[0 0]', 'ShowName', 'off');
+    layout.leftMargin - 50, containerPos(2) + 3 * layout.containerSize(2) / 4 + layout.tagWidth], ...
+    'Value', '[0 0]', 'ShowName', 'off');
 pacePorts = get_param(paceZero, 'PortHandles');
 
 if ~isempty(cfgInport)
-   cfgPorts = get_param(cfgIn, 'PortHandles');
-   add_line(heartModel, cfgPorts.Outport(1), cfgInport);
+    cfgPorts = get_param(cfgIn, 'PortHandles');
+    add_line(heartModel, cfgPorts.Outport(1), cfgInport);
 end
 
 if ~isempty(paceInport)
-   add_line(heartModel, pacePorts.Outport(1), paceInport);
+    add_line(heartModel, pacePorts.Outport(1), paceInport);
 end
 end
 
 function addTopLevelTerminator(heartModel, blockName, sourceOutportHandle, containerRight, tagWidth)
 if isempty(sourceOutportHandle)
-   return;
+    return;
 end
 
 outportPos = get_param(sourceOutportHandle, 'Position');
@@ -956,51 +871,51 @@ moduleSource = string(moduleSource);
 modelName = modelNameFromSource(moduleSource);
 
 if strlength(modelName) == 0 && contains(moduleSource, "/")
-   add_block(char(moduleSource), destinationBlock);
-   return;
+    add_block(char(moduleSource), destinationBlock);
+    return;
 end
 
 if strlength(modelName) == 0
-   modelName = stripFileExtension(moduleSource);
+    modelName = stripFileExtension(moduleSource);
 end
 
-refreshModelReferenceInterface(modelName);
+ refreshModelReferenceInterface(modelName);
 
 try
-   add_block('built-in/ModelReference', destinationBlock, ...
-      'ModelName', char(modelName));
+    add_block('built-in/ModelReference', destinationBlock, ...
+        'ModelName', char(modelName));
 catch err
-   if strcmp(err.identifier, 'Simulink:Commands:MalformedPortInterface') || ...
-         contains(lower(err.message), 'port interface information is malformed')
-      try
-         Simulink.BlockDiagram.updateModelReferenceInterface(char(modelName));
-         add_block('built-in/ModelReference', destinationBlock, ...
-            'ModelName', char(modelName));
-      catch
-         addSubsystemFromModel(destinationBlock, modelName);
-      end
-   else
-      rethrow(err);
-   end
+    if strcmp(err.identifier, 'Simulink:Commands:MalformedPortInterface') || ...
+            contains(lower(err.message), 'port interface information is malformed')
+        try
+            Simulink.BlockDiagram.updateModelReferenceInterface(char(modelName));
+            add_block('built-in/ModelReference', destinationBlock, ...
+                'ModelName', char(modelName));
+        catch
+            addSubsystemFromModel(destinationBlock, modelName);
+        end
+    else
+        rethrow(err);
+    end
 end
 end
 
 function refreshModelReferenceInterface(modelName)
 if strlength(modelName) == 0
-   return;
+    return;
 end
 
 try
-   load_system(char(modelName));
+    load_system(char(modelName));
 catch
-   % If the model cannot be loaded here, let add_block throw a clearer error later.
-   return;
+    % If the model cannot be loaded here, let add_block throw a clearer error later.
+    return;
 end
 
 try
-   Simulink.BlockDiagram.updateModelReferenceInterface(char(modelName));
+    Simulink.BlockDiagram.updateModelReferenceInterface(char(modelName));
 catch
-   % Best effort only; addModuleBlock already has fallback paths.
+    % Best effort only; addModuleBlock already has fallback paths.
 end
 end
 
@@ -1011,9 +926,9 @@ defaultIn = sprintf('%s/In1', destinationBlock);
 defaultOut = sprintf('%s/Out1', destinationBlock);
 
 if exist_block(destinationBlock, 'In1') && exist_block(destinationBlock, 'Out1')
-   delete_line(destinationBlock, 'In1/1', 'Out1/1');
-   delete_block(defaultIn);
-   delete_block(defaultOut);
+    delete_line(destinationBlock, 'In1/1', 'Out1/1');
+    delete_block(defaultIn);
+    delete_block(defaultOut);
 end
 
 Simulink.BlockDiagram.copyContentsToSubSystem(char(modelName), destinationBlock);
@@ -1022,19 +937,19 @@ end
 
 function clearCopiedBusElementTypes(destinationBlock)
 candidateBlocks = find_system(destinationBlock, 'LookUnderMasks', 'all', ...
-   'FollowLinks', 'on', 'Regexp', 'on', 'Name', '^In Bus Element\d*$|^Out Bus Element\d*$');
+    'FollowLinks', 'on', 'Regexp', 'on', 'Name', '^In Bus Element\d*$|^Out Bus Element\d*$');
 
 for idx = 1:numel(candidateBlocks)
-   clearBusElementTypeAttribute(candidateBlocks{idx});
+    clearBusElementTypeAttribute(candidateBlocks{idx});
 end
 end
 
 function clearBusElementTypeAttribute(blockPath)
 try
-   currentType = string(get_param(blockPath, 'OutDataTypeStr'));
-   if startsWith(currentType, "Bus:")
-      set_param(blockPath, 'OutDataTypeStr', 'Inherit: auto');
-   end
+    currentType = string(get_param(blockPath, 'OutDataTypeStr'));
+    if startsWith(currentType, "Bus:")
+        set_param(blockPath, 'OutDataTypeStr', 'Inherit: auto');
+    end
 catch
 end
 end
@@ -1048,20 +963,20 @@ moduleSource = string(moduleSource);
 modelName = "";
 
 if contains(moduleSource, "/")
-   parts = split(moduleSource, "/");
-   parts = parts(strlength(parts) > 0);
-   if isempty(parts)
-      return;
-   end
+    parts = split(moduleSource, "/");
+    parts = parts(strlength(parts) > 0);
+    if isempty(parts)
+        return;
+    end
 
-   parent = "";
-   if numel(parts) > 1
-      parent = lower(parts(end - 1));
-   end
+    parent = "";
+    if numel(parts) > 1
+        parent = lower(parts(end - 1));
+    end
 
-   if parent == "lib"
-      modelName = stripFileExtension(parts(end));
-   end
+    if parent == "lib"
+        modelName = stripFileExtension(parts(end));
+    end
 end
 end
 
@@ -1073,26 +988,26 @@ parameterValueText = encodeParameterValue(parameterValue);
 
 blockType = string(get_param(blockPath, 'BlockType'));
 if any(blockType == ["ModelReference", "Model"])
-   instanceParameters = get_param(blockPath, 'InstanceParameters');
-   if isstruct(instanceParameters)
-      parameterIndex = find(strcmp({instanceParameters.Name}, parameterName), 1, 'first');
-      if ~isempty(parameterIndex)
-         instanceParameters(parameterIndex).Value = parameterValueText;
-         set_param(blockPath, 'InstanceParameters', instanceParameters);
-         return;
-      end
-   end
+    instanceParameters = get_param(blockPath, 'InstanceParameters');
+    if isstruct(instanceParameters)
+        parameterIndex = find(strcmp({instanceParameters.Name}, parameterName), 1, 'first');
+        if ~isempty(parameterIndex)
+            instanceParameters(parameterIndex).Value = parameterValueText;
+            set_param(blockPath, 'InstanceParameters', instanceParameters);
+            return;
+        end
+    end
 end
 
 dialogParameters = get_param(blockPath, 'DialogParameters');
 if isstruct(dialogParameters) && isfield(dialogParameters, parameterName)
-   set_param(blockPath, parameterName, parameterValueText);
+    set_param(blockPath, parameterName, parameterValueText);
 end
 end
 
 function applyParameterBindingsToBlock(blockPath, bindings)
 for idx = 1:numel(bindings)
-   applyBlockConfiguration(blockPath, bindings(idx).parameterName, bindings(idx).variableName);
+    applyBlockConfiguration(blockPath, bindings(idx).parameterName, bindings(idx).variableName);
 end
 end
 
@@ -1103,9 +1018,9 @@ add_block('simulink/Signal Routing/Goto', blockPath);
 
 tagLength = computeTagLength(gotoTag);
 [x0, y0] = tagPosition(referencePos, portCount, portIndex, placeRight, tagLength);
-y0 = y0 + tagVerticalNudge(gotoTag);
+% y0 = y0 + tagVerticalNudge(gotoTag);
 set_param(blockPath, 'Position', [x0, y0, x0 + tagLength, y0 + 20], ...
-   'GotoTag', gotoTag, 'ShowName', 'off');
+    'GotoTag', gotoTag, 'ShowName', 'off');
 end
 
 function addFromBlock(heartSubsystem, blockName, gotoTag, referencePos, portCount, portIndex, inputPort, varargin)
@@ -1115,21 +1030,21 @@ add_block('simulink/Signal Routing/From', blockPath);
 tagLength = computeTagLength(gotoTag);
 [x0, y0] = tagPosition(referencePos, portCount, portIndex, false, tagLength);
 if inputPort > 1
-   y0 = y0 + (portIndex - 1) * (referencePos(4) - referencePos(2)) / portCount;
+    y0 = y0 + (portIndex - 1) * (referencePos(4) - referencePos(2)) / portCount;
 end
 
 targetBlockName = "";
 targetPortIndex = inputPort;
 if ~isempty(varargin)
-   targetBlockName = string(varargin{1});
+    targetBlockName = string(varargin{1});
 end
 if numel(varargin) >= 2
-   targetPortIndex = varargin{2};
+    targetPortIndex = varargin{2};
 end
 y0 = alignToBlockInportY(heartSubsystem, targetBlockName, targetPortIndex, y0, 20);
 
 set_param(blockPath, 'Position', [x0, y0, x0 + tagLength, y0 + 20], ...
-   'GotoTag', gotoTag, 'ShowName', 'off');
+    'GotoTag', gotoTag, 'ShowName', 'off');
 end
 
 function addConfigBusElementBlock(heartSubsystem, blockName, elementName, referencePos, portCount, portIndex, varargin)
@@ -1137,11 +1052,11 @@ blockPath = sprintf('%s/%s', heartSubsystem, blockName);
 existingCfgBlocks = find_system(heartSubsystem, 'SearchDepth', 1, 'Regexp', 'on', 'Name', '^cfg_');
 
 if isempty(existingCfgBlocks)
-   add_block('simulink/Ports & Subsystems/In Bus Element', blockPath, ...
-      'PortName', 'cfg', 'Element', char(elementName));
+    add_block('simulink/Ports & Subsystems/In Bus Element', blockPath, ...
+        'PortName', 'cfg', 'Element', char(elementName));
 else
-   add_block(existingCfgBlocks{1}, blockPath, 'MakeNameUnique', 'off');
-   set_param(blockPath, 'Element', char(elementName));
+    add_block(existingCfgBlocks{1}, blockPath, 'MakeNameUnique', 'off');
+    set_param(blockPath, 'Element', char(elementName));
 end
 
 tagLength = computeTagLength(sprintf('cfg.%s', char(elementName)));
@@ -1150,69 +1065,16 @@ tagLength = computeTagLength(sprintf('cfg.%s', char(elementName)));
 targetBlockName = "";
 targetPortIndex = portIndex;
 if ~isempty(varargin)
-   targetBlockName = string(varargin{1});
+    targetBlockName = string(varargin{1});
 end
 if numel(varargin) >= 2
-   targetPortIndex = varargin{2};
+    targetPortIndex = varargin{2};
 end
 y0 = alignToBlockInportY(heartSubsystem, targetBlockName, targetPortIndex, y0, 20);
-y0 = y0 + busElementVerticalNudge('cfg', elementName);
+%y0 = y0 + busElementVerticalNudge('cfg', elementName);
 
 clearBusElementTypeAttribute(blockPath);
 set_param(blockPath, 'Position', [x0, y0, x0 + tagLength, y0 + 20], 'ShowName', 'off');
-end
-
-function addNodePathInputAdapter(heartSubsystem, blockName, referencePos, targetBlockName, targetPortIndex)
-blockPath = sprintf('%s/%s', heartSubsystem, blockName);
-
-% Prefer explicit nonvirtual-bus conversion when available.
-% If unavailable in this Simulink release, force bus-to-vector conversion.
-created = false;
-try
-   add_block('simulink/Signal Attributes/To Nonvirtual Bus', blockPath);
-   created = true;
-catch
-end
-
-if ~created
-   try
-      add_block('simulink/Signal Attributes/Bus to Vector', blockPath);
-      created = true;
-   catch
-   end
-end
-
-if ~created
-   add_block('simulink/Signal Attributes/Signal Conversion', blockPath);
-   configured = false;
-   optionPairs = {
-      'ConversionOutput', 'Virtual bus to nonvirtual bus';
-      'Output', 'Virtual bus to nonvirtual bus';
-      'ConversionOutput', 'Nonvirtual bus';
-      'Output', 'Nonvirtual bus'
-   };
-
-   for optIdx = 1:size(optionPairs, 1)
-      try
-         set_param(blockPath, optionPairs{optIdx, 1}, optionPairs{optIdx, 2});
-         configured = true;
-         break;
-      catch
-      end
-   end
-
-   if ~configured
-      error('buildHeart:NodePathAdapterConfig', ...
-         'Failed to configure nonvirtual path conversion for block %s.', blockPath);
-   end
-end
-
-adapterWidth = 30;
-adapterHeight = 20;
-left = referencePos(1) - (adapterWidth + 25);
-top = alignToBlockInportY(heartSubsystem, targetBlockName, targetPortIndex, referencePos(2), adapterHeight);
-
-set_param(blockPath, 'Position', [left, top, left + adapterWidth, top + adapterHeight], 'ShowName', 'off');
 end
 
 function [x0, y0] = tagPosition(referencePos, portCount, portIndex, placeRight, tagLength)
@@ -1221,11 +1083,11 @@ blockHeight = referencePos(4) - referencePos(2);
 initYOffset = (blockHeight / portCount) / 2 - 10;
 tagGap = 15;
 if placeRight
-   x0 = referencePos(1) + blockWidth + tagGap;
+    x0 = referencePos(1) + blockWidth + tagGap;
 else
-   x0 = referencePos(1) - tagLength - tagGap;
+    x0 = referencePos(1) - tagLength - tagGap;
 end
-   y0 = referencePos(2) + initYOffset + (portIndex - 1) * (blockHeight / portCount);
+y0 = referencePos(2) + initYOffset + (portIndex - 1) * (blockHeight / portCount);
 end
 
 function tagLength = computeTagLength(tagText)
@@ -1236,198 +1098,181 @@ end
 function y0 = alignToBlockInportY(heartSubsystem, blockName, portIndex, yFallback, blockHeight)
 y0 = yFallback;
 if strlength(blockName) == 0
-   return;
+    return;
 end
 
 targetBlockPath = sprintf('%s/%s', heartSubsystem, char(blockName));
 try
-   targetPorts = get_param(targetBlockPath, 'PortHandles');
-   if isfield(targetPorts, 'Inport') && numel(targetPorts.Inport) >= portIndex
-      inportPosition = get_param(targetPorts.Inport(portIndex), 'Position');
-      if isnumeric(inportPosition) && numel(inportPosition) >= 2
-         y0 = inportPosition(2) - blockHeight / 2;
-      end
-   end
+    targetPorts = get_param(targetBlockPath, 'PortHandles');
+    if isfield(targetPorts, 'Inport') && numel(targetPorts.Inport) >= portIndex
+        inportPosition = get_param(targetPorts.Inport(portIndex), 'Position');
+        if isnumeric(inportPosition) && numel(inportPosition) >= 2
+            y0 = inportPosition(2) - blockHeight / 2;
+        end
+    end
 catch
-   y0 = yFallback;
+    y0 = yFallback;
 end
 end
 
 function addLineSafe(systemName, src, dst)
 try
-   add_line(systemName, src, dst, 'autorouting', 'on');
+    add_line(systemName, src, dst, 'autorouting', 'on');
 catch err
-   error('buildHeart:AddLineFailed', ...
-      'Failed to connect %s to %s in %s: %s', src, dst, systemName, err.message);
+    error('buildHeart:AddLineFailed', ...
+        'Failed to connect %s to %s in %s: %s', src, dst, systemName, err.message);
 end
 end
 
 function moduleSource = resolveModule(moduleRefs, moduleType, moduleSubtype)
-    % Normalize inputs once
-    targetType = lower(string(moduleType));
-    targetSubtype = upper(string(moduleSubtype));
+% Normalize inputs once
+targetType = lower(string(moduleType));
+targetSubtype = upper(string(moduleSubtype));
 
-    % Extract fields as string arrays (vectorized)
-    types   = lower(string({moduleRefs.type}));
-    mtypes  = upper(string({moduleRefs.mtype}));
+% Extract fields as string arrays (vectorized)
+types   = lower(string({moduleRefs.type}));
+mtypes  = upper(string({moduleRefs.mtype}));
 
-    % Strict match only (NO fallback logic)
-    match = (types == targetType) & (mtypes == targetSubtype);
-    % Error if no match found
-    if ~any(match)
-        error('buildHeart:MissingModule', ...
-            'No module found for type %s and mtype %s.', ...
-            moduleType, moduleSubtype);
-    end
-    % Deterministic selection (first match)
-    moduleSource = moduleRefs(find(match, 1, 'first')).module;
+% Strict match only (NO fallback logic)
+match = (types == targetType) & (mtypes == targetSubtype);
+% Error if no match found
+if ~any(match)
+    error('buildHeart:MissingModule', ...
+        'No module found for type %s and mtype %s.', ...
+        moduleType, moduleSubtype);
+end
+% Deterministic selection (first match)
+moduleSource = moduleRefs(find(match, 1, 'first')).module;
 end
 
 function valueText = encodeParameterValue(value)
 if ischar(value)
-   valueText = value;
+    valueText = value;
 elseif isstring(value) && isscalar(value)
-   valueText = char(value);
+    valueText = char(value);
 else
-   valueText = serializeToExpression(value);
+    valueText = serializeToExpression(value);
 end
 end
 
 function expr = serializeToExpression(value)
 if isnumeric(value)
-   expr = mat2str(value, 15);
-   return;
+    expr = mat2str(value, 15);
+    return;
 end
 
 if islogical(value)
-   expr = sprintf('logical(%s)', mat2str(double(value), 15));
-   return;
+    expr = sprintf('logical(%s)', mat2str(double(value), 15));
+    return;
 end
 
 if ischar(value)
-   expr = sprintf('''%s''', strrep(value, '''', ''''''));
-   return;
+    expr = sprintf('''%s''', strrep(value, '''', ''''''));
+    return;
 end
 
 if isstring(value)
-   if isscalar(value)
-      expr = sprintf('''%s''', strrep(char(value), '''', ''''''));
-   else
-      expr = sprintf('string(%s)', serializeToExpression(cellstr(value)));
-   end
-   return;
+    if isscalar(value)
+        expr = sprintf('''%s''', strrep(char(value), '''', ''''''));
+    else
+        expr = sprintf('string(%s)', serializeToExpression(cellstr(value)));
+    end
+    return;
 end
 
 if iscell(value)
-   if isempty(value)
-      expr = '{}';
-      return;
-   end
-   rowExpr = cell(size(value, 1), 1);
-   for rowIdx = 1:size(value, 1)
-      elemExpr = cell(1, size(value, 2));
-      for colIdx = 1:size(value, 2)
-         elemExpr{colIdx} = serializeToExpression(value{rowIdx, colIdx});
-      end
-      rowExpr{rowIdx} = strjoin(elemExpr, ', ');
-   end
-   expr = sprintf('{%s}', strjoin(rowExpr, '; '));
-   return;
+    if isempty(value)
+        expr = '{}';
+        return;
+    end
+    rowExpr = cell(size(value, 1), 1);
+    for rowIdx = 1:size(value, 1)
+        elemExpr = cell(1, size(value, 2));
+        for colIdx = 1:size(value, 2)
+            elemExpr{colIdx} = serializeToExpression(value{rowIdx, colIdx});
+        end
+        rowExpr{rowIdx} = strjoin(elemExpr, ', ');
+    end
+    expr = sprintf('{%s}', strjoin(rowExpr, '; '));
+    return;
 end
 
 if isstruct(value)
-   if isempty(value)
-      expr = 'struct([])';
-      return;
-   end
-   if ~isscalar(value)
-      elemExpr = arrayfun(@serializeToExpression, value, 'UniformOutput', false);
-      expr = sprintf('[%s]', strjoin(elemExpr, ', '));
-      return;
-   end
+    if isempty(value)
+        expr = 'struct([])';
+        return;
+    end
+    if ~isscalar(value)
+        elemExpr = arrayfun(@serializeToExpression, value, 'UniformOutput', false);
+        expr = sprintf('[%s]', strjoin(elemExpr, ', '));
+        return;
+    end
 
-   fields = fieldnames(value);
-   pairs = cell(1, 2 * numel(fields));
-   for idx = 1:numel(fields)
-      fieldName = fields{idx};
-      pairs{2 * idx - 1} = sprintf('''%s''', fieldName);
-      pairs{2 * idx} = serializeToExpression(value.(fieldName));
-   end
-   expr = sprintf('struct(%s)', strjoin(pairs, ', '));
-   return;
+    fields = fieldnames(value);
+    pairs = cell(1, 2 * numel(fields));
+    for idx = 1:numel(fields)
+        fieldName = fields{idx};
+        pairs{2 * idx - 1} = sprintf('''%s''', fieldName);
+        pairs{2 * idx} = serializeToExpression(value.(fieldName));
+    end
+    expr = sprintf('struct(%s)', strjoin(pairs, ', '));
+    return;
 end
 
 error('buildHeart:UnsupportedParameterType', ...
-   'Unsupported parameter type %s for expression encoding.', class(value));
+    'Unsupported parameter type %s for expression encoding.', class(value));
 end
 
-function settings = getBuildSettings(refmodules)
+function settings = getBuildSettings()
 settings = struct( ...
-   'heartModel', defaultHeartModelName(), ...
-   'systemPath', "", ...
-   'standalone', true, ...
-   'openModel', false, ...
-   'apTargetNodes', "RA", ...
-   'vpTargetNodes', "RVA");
-
-if isempty(refmodules)
-   return;
+    'modelName', defaultHeartModelName(), ...
+    'dictPath',"",...
+    'cfg',struct,...
+    'systemPath', "", ...
+    'standalone', true, ...
+    'openModel', false, ...
+    'apTargetNodes', "", ...
+    'vpTargetNodes', "");
 end
 
+function settings = normalizeBuildSettings(userSettings)
+settings = getBuildSettings();
 optionNames = fieldnames(settings);
 for idx = 1:numel(optionNames)
-   optionName = optionNames{idx};
-   if isfield(refmodules, optionName)
-      settings.(optionName) = castBuildSetting(optionName, refmodules(1).(optionName));
-   end
-end
-end
-
-function settings = normalizeBuildSettings(userSettings, refmodules)
-settings = getBuildSettings(refmodules);
-optionNames = fieldnames(settings);
-for idx = 1:numel(optionNames)
-   optionName = optionNames{idx};
-   if isfield(userSettings, optionName)
-      settings.(optionName) = castBuildSetting(optionName, userSettings.(optionName));
-   end
+    optionName = optionNames{idx};
+    if isfield(userSettings, optionName)
+        settings.(optionName) = castBuildSetting(optionName, userSettings.(optionName));
+    end
 end
 
-% Backward-compatible aliases for single-value settings.
-if isfield(userSettings, 'apTargetNode')
-   settings.apTargetNodes = castBuildSetting('apTargetNodes', userSettings.apTargetNode);
-end
-if isfield(userSettings, 'vpTargetNode')
-   settings.vpTargetNodes = castBuildSetting('vpTargetNodes', userSettings.vpTargetNode);
-end
 end
 
 function value = castBuildSetting(optionName, value)
 switch optionName
-   case {'heartModel', 'systemPath'}
-      value = string(value);
-   case {'apTargetNodes', 'vpTargetNodes'}
-      value = string(value(:));
-   case 'standalone'
-      value = logical(value);
+    case {'heartModel', 'systemPath'}
+        value = string(value);
+    case 'standalone'
+        value = logical(value);
 end
 end
 
 function modelName = defaultHeartModelName()
+%This function generates a default Simulink model name that is guaranteed
+% not to conflict with any existing model in the current MATLAB project.
 proj = currentProject;
 slxFiles = dir(fullfile(proj.RootFolder, "**", "*.slx"));
 mdlFiles = dir(fullfile(proj.RootFolder, "**", "*.mdl"));
 files = [slxFiles; mdlFiles];
 modelNames = erase(string({files.name}), [".slx" ".mdl"]);
-modelName = matlab.lang.makeUniqueStrings("Heart_Auto", modelNames);
+modelName = matlab.lang.makeUniqueStrings("Heart_default", modelNames);
 end
 
 function stripped = stripFileExtension(value)
 [~, name, ext] = fileparts(char(value));
 if isempty(ext)
-   stripped = string(value);
+    stripped = string(value);
 else
-   stripped = string(name);
+    stripped = string(name);
 end
 end
 
@@ -1440,31 +1285,31 @@ pos = [left, top, left + sizeVec(1), top + sizeVec(2)];
 end
 
 function [x0, y0] = alignNearSourceOutport(heartSubsystem, sourceBlockName, portIndex, ...
-   xFallback, yFallback, blockHeight)
+    xFallback, yFallback, blockHeight)
 x0 = xFallback;
 y0 = yFallback;
 
 if strlength(sourceBlockName) == 0
-   return;
+    return;
 end
 
 sourceBlockPath = sprintf('%s/%s', heartSubsystem, char(sourceBlockName));
 try
-   sourcePos = get_param(sourceBlockPath, 'Position');
-   if isnumeric(sourcePos) && numel(sourcePos) >= 4
-      x0 = sourcePos(3) + 25;
-   end
+    sourcePos = get_param(sourceBlockPath, 'Position');
+    if isnumeric(sourcePos) && numel(sourcePos) >= 4
+        x0 = sourcePos(3) + 25;
+    end
 
-   sourcePorts = get_param(sourceBlockPath, 'PortHandles');
-   if isfield(sourcePorts, 'Outport') && numel(sourcePorts.Outport) >= portIndex
-      outportPosition = get_param(sourcePorts.Outport(portIndex), 'Position');
-      if isnumeric(outportPosition) && numel(outportPosition) >= 2
-         y0 = outportPosition(2) - blockHeight / 2;
-      end
-   end
+    sourcePorts = get_param(sourceBlockPath, 'PortHandles');
+    if isfield(sourcePorts, 'Outport') && numel(sourcePorts.Outport) >= portIndex
+        outportPosition = get_param(sourcePorts.Outport(portIndex), 'Position');
+        if isnumeric(outportPosition) && numel(outportPosition) >= 2
+            y0 = outportPosition(2) - blockHeight / 2;
+        end
+    end
 catch
-   x0 = xFallback;
-   y0 = yFallback;
+    x0 = xFallback;
+    y0 = yFallback;
 end
 end
 
@@ -1473,31 +1318,74 @@ margin = 15;
 maxIterations = 30;
 
 for iter = 1:maxIterations
-   changed = false;
-   candidateRect = [x0, y0, x0 + blockWidth, y0 + blockHeight];
-   blockList = find_system(heartSubsystem, 'SearchDepth', 1, 'Type', 'Block');
+    changed = false;
+    candidateRect = [x0, y0, x0 + blockWidth, y0 + blockHeight];
+    blockList = find_system(heartSubsystem, 'SearchDepth', 1, 'Type', 'Block');
 
-   for idx = 1:numel(blockList)
-      otherBlockPath = blockList{idx};
-      if strcmp(otherBlockPath, blockPath)
-         continue;
-      end
+    for idx = 1:numel(blockList)
+        otherBlockPath = blockList{idx};
+        if strcmp(otherBlockPath, blockPath)
+            continue;
+        end
 
-      otherPos = get_param(otherBlockPath, 'Position');
-      if rectanglesOverlap(candidateRect, otherPos)
-         x0 = otherPos(3) + margin;
-         changed = true;
-      end
-   end
+        otherPos = get_param(otherBlockPath, 'Position');
+        if rectanglesOverlap(candidateRect, otherPos)
+            x0 = otherPos(3) + margin;
+            changed = true;
+        end
+    end
 
-   if ~changed
-      break;
-   end
+    if ~changed
+        break;
+    end
 end
 end
 
 function tf = rectanglesOverlap(a, b)
 tf = a(1) < b(3) && a(3) > b(1) && a(2) < b(4) && a(4) > b(2);
+end
+
+function attachDict(heartModel, dictPath)
+dictPath = resolveHeartDictionaryPath(dictPath);
+closeShadowingDictionariesForTarget(dictPath);
+[dictFolder, dictName, dictExt] = fileparts(dictPath);
+if strlength(string(dictFolder)) > 0
+    addpath(dictFolder);
+end
+dictRef = string(strcat(dictName, dictExt));
+%% Attach dictionary
+set_param(...
+    heartModel,...
+    "DataDictionary",...
+    dictRef);
+set_param(heartModel, 'EnableAccessToBaseWorkspace', 'off');
+end
+
+function assignParameters(mdlWks,parameterSpecs)
+%% Assign parameters
+for i=1:numel(parameterSpecs)
+    assignParameterBindings(...
+        mdlWks,...
+        parameterSpecs{i}.parameterBindings);
+end
+
+end
+function assignParameterBindings(mdlWks,bindings)
+
+for i=1:numel(bindings)
+    name=bindings(i).variableName;
+    if ~isvarname(name)
+        error(...
+            "Invalid variable name %s",...
+            name);
+    end
+
+    assignin(...
+        mdlWks,...
+        name,...
+        bindings(i).value);
+
+end
 end
 
 function resolvedPath = resolveHeartDictionaryPath(dictPath)
@@ -1515,42 +1403,6 @@ if isfile(candidate)
 end
 
 resolvedPath = char(requested);
-end
-
-function ensureDictionaryReferences(dictPath)
-if ~isfile(dictPath)
-   return;
-end
-
-closeShadowingDictionariesForTarget(dictPath);
-
-proj = currentProject;
-componentFolder = fullfile(proj.RootFolder, 'Data', 'sldd_component');
-if ~isfolder(componentFolder)
-   return;
-end
-
-componentDds = dir(fullfile(componentFolder, '*.sldd'));
-if isempty(componentDds)
-   return;
-end
-
-addpath(componentFolder);
-dd = Simulink.data.dictionary.open(dictPath);
-cleanup = onCleanup(@() close(dd));
-
-existing = string(dd.DataSources);
-for idx = 1:numel(componentDds)
-   refName = string(componentDds(idx).name);
-   if ~any(existing == refName)
-      addDataSource(dd, char(refName));
-      existing(end + 1) = refName; %#ok<AGROW>
-   end
-end
-
-saveChanges(dd);
-clear cleanup;
-close(dd);
 end
 
 function closeShadowingDictionariesForTarget(targetPath)
@@ -1583,3 +1435,5 @@ for idx = 1:numel(openPaths)
    end
 end
 end
+
+

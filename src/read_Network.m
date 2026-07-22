@@ -166,25 +166,39 @@ end
 validateMappedFieldsExist(nodeVarNames, N_cfgSourceFields, 'N');
 validateMappedFieldsExist(nodeVarNames, M_cfgSourceFields, 'M');
 
+% Open dictionaries and create empty, perfectly-ordered template structs
+dict_N = Simulink.data.dictionary.open('N_dd.sldd');
+template_N = Simulink.Bus.createMATLABStruct('Config_N', [], [1 1], dict_N);
+
+dict_M = Simulink.data.dictionary.open('M_dd.sldd');
+template_M = Simulink.Bus.createMATLABStruct('Config_M', [], [1 1], dict_M);
+
+% NM uses buses from NM_dd.sldd
+dict_NM = Simulink.data.dictionary.open('NM_dd.sldd');
+template_NM_M = Simulink.Bus.createMATLABStruct('Config_M', [], [1 1], dict_NM);
+template_NM_N = Simulink.Bus.createMATLABStruct('Config_N', [], [1 1], dict_NM);
+
 parfor k = 1:nodeNum
     
     switch node_type(k)
         case "N"
-            Nodes_cfg{k}=table2struct(nodes(k, N_cfgSourceFields));
-            Nodes_cfg{k}=renameStructFields(Nodes_cfg{k}, N_cfgSourceFields, N_cfgFields);
+            tempStruct = table2struct(nodes(k, N_cfgSourceFields));
+            Nodes_cfg{k} = renameStructFields(tempStruct, N_cfgSourceFields, N_cfgFields, template_N);
 
         case "M"
-            Nodes_cfg{k}=table2struct(nodes(k, M_cfgSourceFields));
-            Nodes_cfg{k}=renameStructFields(Nodes_cfg{k}, M_cfgSourceFields, M_cfgFields);
+            tempStruct = table2struct(nodes(k, M_cfgSourceFields));
+            Nodes_cfg{k} = renameStructFields(tempStruct, M_cfgSourceFields, M_cfgFields, template_M);
 
         case "NM"
             NM_struct = struct;
-            NM_struct.cfg_N = table2struct(nodes(k, N_cfgSourceFields));
-            NM_struct.cfg_N = renameStructFields(NM_struct.cfg_N, N_cfgSourceFields, N_cfgFields);
-            NM_struct.cfg_M = table2struct(nodes(k, M_cfgSourceFields));
-            NM_struct.cfg_M = renameStructFields(NM_struct.cfg_M, M_cfgSourceFields, M_cfgFields);
+            
+            tempN = table2struct(nodes(k, N_cfgSourceFields));
+            NM_struct.cfg_N = renameStructFields(tempN, N_cfgSourceFields, N_cfgFields, template_NM_N);
+            
+            tempM = table2struct(nodes(k, M_cfgSourceFields));
+            NM_struct.cfg_M = renameStructFields(tempM, M_cfgSourceFields, M_cfgFields, template_NM_M);
+            
             Nodes_cfg{k} = NM_struct;
-
         otherwise
             error('read_Network:UnsupportedNodeType', ...
                 'Unsupported node type "%s" at row %d. Supported types are N, M, NM.', ...
@@ -225,17 +239,14 @@ if ~isempty(missing)
 end
 end
 
-function sOut = renameStructFields(sIn, sourceFields, targetFields)
-sOut = sIn;
-for i = 1:numel(sourceFields)
-    src = char(sourceFields(i));
-    dst = char(targetFields(i));
-    if ~strcmp(src, dst)
-        sOut.(dst) = sOut.(src);
-        sOut = rmfield(sOut, src);
+function sOut = renameStructFields(sIn, sourceFields, targetFields, templateStruct)
+    % 1. Start with the perfectly ordered template
+    sOut = templateStruct;
+    
+    % 2. Map the data from the table into the template
+    for i = 1:numel(sourceFields)
+        src = char(sourceFields(i));
+        dst = char(targetFields(i));
+        sOut.(dst) = sIn.(src);
     end
-end
-
-% Preserve the canonical field order expected by referenced model parameters.
-sOut = orderfields(sOut, cellstr(targetFields));
 end

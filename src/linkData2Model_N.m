@@ -6,7 +6,10 @@
 % -------------------------------------------------------------------
  modelFile='models/Node_N_3D.slx';
 
-Config_MATLABStruct = struct;
+% Open dictionaries and create empty, perfectly-ordered template structs
+dict_ = Simulink.data.dictionary.open('N_dd.sldd');
+Config_MATLABStruct = Simulink.Bus.createMATLABStruct('Config_N', [], [1 1], dict_);
+
 Config_MATLABStruct.BCL = 0.814;
 Config_MATLABStruct.SD = 0.002;
 Config_MATLABStruct.f1 = 0.1;
@@ -43,6 +46,7 @@ assignin(...
     "cfg",...
     Config_MATLABStruct);
 %% Attach dictionary
+set_param(modelName, 'EnableAccessToBaseWorkspace', 'off');
 set_param(...
     modelName,...
     "DataDictionary",...
