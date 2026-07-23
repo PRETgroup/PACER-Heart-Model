@@ -690,7 +690,6 @@ end
 function addOutputs(heartSubsystem, nodeSpecs, electrodeSpecs, nodeCount, pathCount, layout)
 left = layout.leftMargin + layout.outputColumnOffset;
 cellsTemplateBlock = "";
-egmsTemplateBlock = "";
 wavesTemplateBlock = "";
 
 for nodeIdx = 1:nodeCount
@@ -710,15 +709,49 @@ for pathIdx = 1:pathCount
     electrodeSpec = electrodeSpecs{pathIdx};
     y0 = electrodeSpec.position(2) + layout.tagWidth;
 
-    egmOutBusName = sprintf('egms_%s', electrodeSpec.egmTag);
-    egmsTemplateBlock = addOutputBusElementBlock(heartSubsystem, egmOutBusName, 'EGMs', ...
-        electrodeSpec.egmTag, electrodeSpec.blockName, 1, left, y0 - layout.tagSpacing, egmsTemplateBlock);
-    addLineSafe(heartSubsystem, sprintf('%s/1', electrodeSpec.blockName), sprintf('%s/1', egmOutBusName));
+    % Add Goto label for EGM_i (placed right of electrode block)
+    addGotoBlock(heartSubsystem, electrodeSpec.egmTag, electrodeSpec.egmTag, ...
+        electrodeSpec.position, 2, 1, true);
+    addLineSafe(heartSubsystem, sprintf('%s/1', electrodeSpec.blockName), ...
+        sprintf('%s/1', electrodeSpec.egmTag));
 
     outBusName = sprintf('waves_%s', electrodeSpec.waveTag);
     wavesTemplateBlock = addOutputBusElementBlock(heartSubsystem, outBusName, 'waves', ...
         electrodeSpec.waveTag, electrodeSpec.blockName, 2, left, y0, wavesTemplateBlock);
     addLineSafe(heartSubsystem, sprintf('%s/2', electrodeSpec.blockName), sprintf('%s/1', outBusName));
+end
+
+% Sum all EGM_i via From labels and output as a single EGMs outport (port 2)
+if pathCount > 0
+    egmYPositions = zeros(pathCount, 1);
+    for pathIdx = 1:pathCount
+        egmYPositions(pathIdx) = electrodeSpecs{pathIdx}.position(2) + layout.tagWidth - layout.tagSpacing;
+    end
+    sumY = round(mean(egmYPositions));
+    sumH = max(30, 14 * pathCount);
+    sumBlockName = 'EGMs_Sum';
+    sumBlockPath = sprintf('%s/%s', heartSubsystem, sumBlockName);
+    inputsStr = repmat('+', 1, pathCount);
+    sumPosition = [left, sumY - round(sumH/2), left + 30, sumY + round(sumH/2)];
+    add_block('simulink/Math Operations/Add', sumBlockPath, ...
+        'Inputs', inputsStr, ...
+        'Position', sumPosition, ...
+        'ShowName', 'off');
+    for pathIdx = 1:pathCount
+        electrodeSpec = electrodeSpecs{pathIdx};
+        fromBlockName = sprintf('FromEGM_%d', pathIdx);
+        addFromBlock(heartSubsystem, fromBlockName, electrodeSpec.egmTag, ...
+            sumPosition, pathCount, pathIdx, pathIdx, sumBlockName, pathIdx);
+        addLineSafe(heartSubsystem, sprintf('%s/1', fromBlockName), ...
+            sprintf('%s/%d', sumBlockName, pathIdx));
+    end
+    egmsOutportPath = sprintf('%s/EGMs', heartSubsystem);
+    outX = left + 50;
+    add_block('simulink/Ports & Subsystems/Out1', egmsOutportPath, ...
+        'Port', '2', ...
+        'Position', [outX, sumY - 7, outX + 30, sumY + 7], ...
+        'ShowName', 'on');
+    addLineSafe(heartSubsystem, sprintf('%s/1', sumBlockName), 'EGMs/1');
 end
 end
 

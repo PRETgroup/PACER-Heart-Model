@@ -3,6 +3,7 @@ numNodes = numnodes(G);
 numPaths = numedges(G);
 nodeNames = string(G.Nodes.Name);
 nodeTypes = upper(string(G.Nodes.Type));
+buildLeadDictionary(leadCfgBus);% TODO: need to improve
 cfg=struct;% The data for model configuration
 % Total number of bus elements
 if nargin <3
@@ -54,7 +55,7 @@ elements(idx) = Simulink.BusElement;
 elements(idx).Name = "Leads";
 elements(idx).DataType = "Bus: Lead_group";
 heartCfgBus.Elements = elements;
-dictPath = buildHeartDictionary(slddHeart, heartCfgBus,leadCfgBus);
+dictPath = buildHeartDictionary(slddHeart, heartCfgBus);
 else
 heartCfgBus.Elements = elements;
 dictPath = buildHeartDictionary(slddHeart, heartCfgBus);
@@ -62,7 +63,7 @@ end
 
 end
 
-function dictPath = buildHeartDictionary(dictName,heartCfgBus,leadCfgBus)
+function dictPath = buildHeartDictionary(dictName,heartCfgBus)
 proj=currentProject;
 root=proj.RootFolder;
 dictPath=fullfile(...
@@ -89,17 +90,19 @@ references=[
     "N_dd.sldd"
     "M_dd.sldd"
     "NM_dd.sldd"
-    "Leads_type.sldd"
     "Path_dd.sldd"
+    "Electrode_dd.sldd"
 ];
 
 existing = string(dd.DataSources);
 
+for datai = 1:numel(existing)
+    removeDataSource(dd,existing(datai))
+end
+
 for i = 1:numel(references)
     refName = references(i);
-    if ~any(existing == refName)
-        addDataSource(dd, refName);
-    end
+    addDataSource(dd, refName);
 end
 
 %% Store top-level bus
@@ -109,17 +112,60 @@ try
 catch
     warning('HeartCfgBus already exists')
     entry = getEntry(design, 'HeartCfgBus');
-    setValue(entry, heartCfgBus);      % Replace the existing value
-    
+    setValue(entry, heartCfgBus);      % Replace the existing value    
 end
-if nargin >2
+
+saveChanges(dd);
+close(dd);
+end
+
+function buildLeadDictionary(leadCfgBus)
+dictName='Leads.sldd';
+proj=currentProject;
+root=proj.RootFolder;
+dictPath=fullfile(...
+    root,...
+    "Data",...
+    "sldd_component",...
+    dictName);
+closeConflictingOpenDictionaries(dictPath, dictName);
+%% Create dictionary
+if isfile(dictPath)
+    warning('%s exists.',dictPath)
+    dd=openDictionaryWithRetry(dictPath);
+else
+    Simulink.data.dictionary.create(dictPath);
+    dd=openDictionaryWithRetry(dictPath);
+end
+%% Add component dictionary references
+componentFolder=fullfile(...
+    root,...
+    "Data",...
+    "sldd_component");
+addpath(componentFolder);
+references=[
+    "Leads_type.sldd"
+];
+
+existing = string(dd.DataSources);
+
+for datai = 1:numel(existing)
+    removeDataSource(dd,existing(datai))
+end
+
+for i = 1:numel(references)
+    refName = references(i);
+    addDataSource(dd, refName);
+end
+
+%% Store top-level bus
+design=getSection(dd,"Design Data");
 try
     addEntry(design, 'Lead_group', leadCfgBus);
 catch
     warning('Lead_group already exists')
     entry = getEntry(design, 'Lead_group');
     setValue(entry, leadCfgBus);      % Replace the existing value
-end
 end
 saveChanges(dd);
 close(dd);
