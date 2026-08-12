@@ -136,10 +136,11 @@ M_cfgSourceFields(M_cfgFields == "VT") = "VT_m";
 M_cfgSourceFields(M_cfgFields == "VR") = "VR_m";
 
 nodeNum = height(G.Nodes);
-pathNum = height(G.Edges);
+pathNum = height(paths);
+edgeNum = numedges(G);
 Nodes_cfg=cell(nodeNum,1);
-Paths_cfg=cell(pathNum,1);
-Dipoles = cell(pathNum,1);
+Paths_cfg=cell(edgeNum,1);
+Dipoles = cell(edgeNum,1);
 
 node_type = upper(string(nodes.Type));
 
@@ -208,13 +209,27 @@ end
 
 G.Nodes.cfg = Nodes_cfg;
 
+edgeAssigned = false(edgeNum,1);
 for k = 1:pathNum
 
-    Paths_cfg{k}=table2struct(paths(k, Path_cfgFields));
+    edgeIdx = findedge(G, startIdx(k), endIdx(k));
+    if edgeIdx == 0
+        error('read_Network:MissingGraphEdge', ...
+            'No graph edge found for path row %d (%s -> %s).', ...
+            k, startNames(k), endNames(k));
+    end
+    if edgeAssigned(edgeIdx)
+        error('read_Network:DuplicateGraphEdgeMapping', ...
+            'Multiple path rows map to graph edge %d (%s -> %s).', ...
+            edgeIdx, startNames(k), endNames(k));
+    end
+    edgeAssigned(edgeIdx) = true;
+
+    Paths_cfg{edgeIdx}=table2struct(paths(k, Path_cfgFields));
 
     iNode = startIdx(k);
     jNode = endIdx(k);
-    Dipoles{k} = struct( ...
+    Dipoles{edgeIdx} = struct( ...
         'xi', G.Nodes.x(iNode), ...
         'yi', G.Nodes.y(iNode), ...
         'zi', G.Nodes.z(iNode), ...
@@ -223,6 +238,13 @@ for k = 1:pathNum
         'zj', G.Nodes.z(jNode), ...
         'C',  paths.C(k));
 
+end
+
+if any(~edgeAssigned)
+    missingEdges = find(~edgeAssigned);
+    error('read_Network:UnmappedGraphEdges', ...
+        'Some graph edges did not receive path configuration: %s', ...
+        strjoin(string(missingEdges), ', '));
 end
 
 G.Edges.pathCfg = Paths_cfg;

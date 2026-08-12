@@ -93,7 +93,7 @@ new_system(heartModel);
 if settings.openModel
     open_system(heartModel);
 end
-configHeartModel(heartModel,moduleRefs,settings);
+configHeartModel(heartModel);
 layout = getLayout();
 %% Prepare the specs
 nodeCount = numnodes(G);
@@ -413,39 +413,16 @@ for pathIdx = 1:numel(pathSpecs)
 end
 end
 
-function configHeartModel(heartModel,moduleRefs,settings)
-configTemplateModel = "";
-if isfield(settings, 'configTemplateModel') && strlength(string(settings.configTemplateModel)) > 0
-    configTemplateModel = string(settings.configTemplateModel);
-else
-    for moduleIdx = 1:numel(moduleRefs)
-        candidate = modelNameFromSource(moduleRefs(moduleIdx).module);
-        if strlength(candidate) == 0
-            candidate = stripFileExtension(moduleRefs(moduleIdx).module);
-        end
+function configHeartModel(heartModel)
+%  Create the Configuration Reference
+configRef = Simulink.ConfigSetRef();
+configRef.Name = 'SharedConfigRef';
+configRef.WSVarName = 'MasterConfig';
 
-        if strlength(candidate) == 0 || strcmpi(char(candidate), heartModel)
-            continue;
-        end
+%  Attach the reference to the top-level model
+attachConfigSet(heartModel, copy(configRef), true);
+setActiveConfigSet(heartModel, 'SharedConfigRef');
 
-        if bdIsLoaded(char(candidate)) || exist(sprintf('%s.slx', char(candidate)), 'file') || ...
-                exist(sprintf('%s.mdl', char(candidate)), 'file')
-            configTemplateModel = candidate;
-            break;
-        end
-    end
-end
-
-if strlength(configTemplateModel) > 0
-    load_system(char(configTemplateModel));
-    srcCs = getActiveConfigSet(char(configTemplateModel));
-    newCs = copy(srcCs);
-    attachConfigSet(heartModel, newCs, true);
-    setActiveConfigSet(heartModel, get_param(newCs, 'Name'));
-else
-    warning('buildHeart:MissingConfigTemplateModel', ...
-        'No config template model found. Using default config set for %s.', heartModel);
-end
 end
 
 function heartSubsystem = createHeartContainer(heartModel, layout)

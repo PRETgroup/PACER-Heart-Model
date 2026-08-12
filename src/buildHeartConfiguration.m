@@ -92,6 +92,7 @@ references=[
     "NM_dd.sldd"
     "Path_dd.sldd"
     "Electrode_dd.sldd"
+    "SharedConfigData.sldd"
 ];
 
 existing = string(dd.DataSources);
