@@ -21,7 +21,6 @@ function heart = buildHeartFcn(G,refmodules,settings)
 %       - heartModel : generated top model name
 %       - systemPath : save location
 %       - standalone : add top-level I/O wrappers when true
-%       - configTemplateModel : source model for config-set copy
 %       - apTargetNodes : string/scalar or string array of AP target nodes
 %       - vpTargetNodes : string/scalar or string array of VP target nodes
 %
@@ -62,7 +61,6 @@ function heart = buildHeartFcn(G,refmodules,settings)
 %   % Step 3: Build settings (optional)
 %   settings = struct( ...
 %      'heartModel', "test_build", ...
-%      'configTemplateModel', "Node_N", ...
 %      'apTargetNodes', ["RA"], ...
 %      'vpTargetNodes', ["RVA"]);
 %
