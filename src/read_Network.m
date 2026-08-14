@@ -8,7 +8,7 @@ function G = read_Network(xsheetfile, node_sheet, node_range, path_sheet, path_r
 %   Inputs
 %   ------
 %   XSHEETFILE : string | char
-%       Path to the Excel workbook containing network data.
+%       Path to the Excel workbook containing network data,relative to currentProject().RootFolder .
 %   NODE_SHEET : string | char
 %       Worksheet name (or index) for node data.
 %   NODE_RANGE : string | char
@@ -55,9 +55,9 @@ if ~(ischar(path_sheet) || isStringScalar(path_sheet) || ...
     error('read_Network:InvalidPathSheet', ...
         'PATH_SHEET must be a sheet name (text scalar) or positive integer sheet index.');
 end
-
-nodes = readtable(xsheetfile,'Sheet', node_sheet,Range = node_range);
-paths = readtable(xsheetfile,'Sheet',path_sheet,Range = path_range);
+resolvedPath=resolveFilePath(xsheetfile);
+nodes = readtable(resolvedPath,'Sheet', node_sheet,Range = node_range);
+paths = readtable(resolvedPath,'Sheet',path_sheet,Range = path_range);
 
 requiredNodeCols = ["Node_name","Type","x","y","z"];
 requiredPathCols = ["Starti","Endj","C"];

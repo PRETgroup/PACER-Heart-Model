@@ -1,16 +1,10 @@
-function [dictPath,cfg] = buildHeartConfiguration(G,slddHeart,leadCfgBus,leadGroup)
+function [cfg] = buildHeartConfiguration(G,slddHeart,leadGroup,leadDictName)
 numNodes = numnodes(G);
 numPaths = numedges(G);
 nodeNames = string(G.Nodes.Name);
 nodeTypes = upper(string(G.Nodes.Type));
-buildLeadDictionary(leadCfgBus);% TODO: need to improve
 cfg=struct;% The data for model configuration
-% Total number of bus elements
-if nargin <3
-    numElements = numNodes + numPaths ; % no Leads
-else
-    numElements = numNodes + numPaths + 1; % +1 for Leads
-end
+numElements = numNodes + numPaths + 1; % +1 for Leads
 % Preallocate BusElement array
 elements(1, numElements) = Simulink.BusElement;
 idx = 1;
@@ -48,22 +42,17 @@ end
 %% Create Heart configuration bus
 heartCfgBus = Simulink.Bus;
 % Create dictionary
-if nargin >3
+
 %% Lead group
 cfg.Leads=leadGroup;
 elements(idx) = Simulink.BusElement;
 elements(idx).Name = "Leads";
 elements(idx).DataType = "Bus: Lead_group";
 heartCfgBus.Elements = elements;
-dictPath = buildHeartDictionary(slddHeart, heartCfgBus);
-else
-heartCfgBus.Elements = elements;
-dictPath = buildHeartDictionary(slddHeart, heartCfgBus);
+buildHeartDictionary(slddHeart, heartCfgBus,leadDictName);
 end
 
-end
-
-function dictPath = buildHeartDictionary(dictName,heartCfgBus)
+function buildHeartDictionary(dictName,heartCfgBus,leadDictName)
 proj=currentProject;
 root=proj.RootFolder;
 dictPath=fullfile(...
@@ -91,8 +80,10 @@ references=[
     "M_dd.sldd"
     "NM_dd.sldd"
     "Path_dd.sldd"
-    "Electrode_dd.sldd"
+    leadDictName
     "SharedConfigData.sldd"
+    "Sensing_dd.sldd"
+    "Wavefront_type.sldd"
 ];
 
 existing = string(dd.DataSources);
@@ -120,103 +111,7 @@ saveChanges(dd);
 close(dd);
 end
 
-function buildLeadDictionary(leadCfgBus)
-dictName='Leads.sldd';
-proj=currentProject;
-root=proj.RootFolder;
-dictPath=fullfile(...
-    root,...
-    "Data",...
-    "sldd_component",...
-    dictName);
-closeConflictingOpenDictionaries(dictPath, dictName);
-%% Create dictionary
-if isfile(dictPath)
-    warning('%s exists.',dictPath)
-    dd=openDictionaryWithRetry(dictPath);
-else
-    Simulink.data.dictionary.create(dictPath);
-    dd=openDictionaryWithRetry(dictPath);
-end
-%% Add component dictionary references
-componentFolder=fullfile(...
-    root,...
-    "Data",...
-    "sldd_component");
-addpath(componentFolder);
-references=[
-    "Leads_type.sldd"
-];
 
-existing = string(dd.DataSources);
 
-for datai = 1:numel(existing)
-    removeDataSource(dd,existing(datai))
-end
 
-for i = 1:numel(references)
-    refName = references(i);
-    addDataSource(dd, refName);
-end
 
-%% Store top-level bus
-design=getSection(dd,"Design Data");
-try
-    addEntry(design, 'Lead_group', leadCfgBus);
-catch
-    warning('Lead_group already exists')
-    entry = getEntry(design, 'Lead_group');
-    setValue(entry, leadCfgBus);      % Replace the existing value
-end
-saveChanges(dd);
-close(dd);
-end
-
-function closeConflictingOpenDictionaries(~, dictName)
-dictName = string(dictName);
-
-try
-    openPaths = string(Simulink.data.dictionary.getOpenDictionaryPaths);
-catch
-    openPaths = strings(0, 1);
-end
-
-if isempty(openPaths)
-    return;
-end
-
-hasNameConflict = false;
-for i = 1:numel(openPaths)
-    openPath = openPaths(i);
-    [~, openBase, openExt] = fileparts(char(openPath));
-    openFileName = string(strcat(openBase, openExt));
-
-    if strcmpi(char(openFileName), char(dictName))
-        hasNameConflict = true;
-        break;
-    end
-end
-
-if hasNameConflict
-    % Simulink data dictionaries are unique by filename, not full path.
-    Simulink.data.dictionary.closeAll;
-end
-end
-
-function dd = openDictionaryWithRetry(dictPath)
-try
-    dd = Simulink.data.dictionary.open(dictPath);
-catch err
-    if isDictionaryNameConflict(err)
-        Simulink.data.dictionary.closeAll;
-        dd = Simulink.data.dictionary.open(dictPath);
-    else
-        rethrow(err);
-    end
-end
-end
-
-function tf = isDictionaryNameConflict(err)
-msg = lower(string(err.message));
-tf = contains(msg, "another dictionary with the same file name is already open");
-end

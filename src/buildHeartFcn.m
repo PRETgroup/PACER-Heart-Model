@@ -19,7 +19,7 @@ function heart = buildHeartFcn(G,refmodules,settings)
 %   SETTINGS : struct (optional)
 %       Build options. Supported fields:
 %       - heartModel : generated top model name
-%       - systemPath : save location
+%       - modelPath : save location
 %       - standalone : add top-level I/O wrappers when true
 %       - apTargetNodes : string/scalar or string array of AP target nodes
 %       - vpTargetNodes : string/scalar or string array of VP target nodes
@@ -87,10 +87,6 @@ if bdIsLoaded(heartModel)
     close_system(heartModel, 0);
 end
 new_system(heartModel);
-
-if settings.openModel
-    open_system(heartModel);
-end
 configHeartModel(heartModel);
 layout = getLayout();
 %% Prepare the specs
@@ -159,7 +155,7 @@ addJointAssembly(heartSubsystem, nodeNames, jointTags, layout, settings);
 addControlInputs(heartSubsystem, layout);
 addOutputs(heartSubsystem, nodeSpecs, electrodeSpecs, nodeCount, pathCount, layout);
 %%  link the dictionary to the model
-attachDict(heartModel, settings.dictPath)
+attachDict(heartModel, settings.slddHeart)
 %%save parameters to the model workspace;
 mdlWks=get_param(heartModel,"ModelWorkspace");
 assignParameters(mdlWks,parameterSpecs)
@@ -169,8 +165,8 @@ if settings.standalone
     assignin(mdlWks,"cfg",settings.cfg);
 end
 
-if strlength(settings.systemPath) > 0
-    save_system(heartModel, fullfile(char(settings.systemPath), heartModel));
+if strlength(settings.modelPath) > 0
+    save_system(heartModel, fullfile(currentProject().RootFolder,char(settings.modelPath), heartModel));
 else
     save_system(heartModel);
 end
@@ -785,25 +781,6 @@ tagLength = computeTagLength(sprintf('%s.%s', portName, elementName));
 set_param(blockPath, 'Position', [left, y0, left + tagLength, y0 + 20], 'ShowName', 'off');
 end
 
-function dy = busElementVerticalNudge(portName, elementName)
-key = sprintf('%s.%s', char(portName), char(elementName));
-switch key
-    case {'cfg.SA', 'cfg.path_1', 'Cells.c_SA', 'waves.w_1'}
-        dy = 5;
-    otherwise
-        dy = 0;
-end
-end
-
-function dy = tagVerticalNudge(tagName)
-switch string(tagName)
-    case ["c_SA", "SA_a_J_SA_1"]
-        dy = 5;
-    otherwise
-        dy = 0;
-end
-end
-
 function addStandaloneIo(heartModel, heartSubsystem, layout)
 containerPos = [layout.leftMargin, layout.topMargin, ...
     layout.leftMargin + layout.containerSize(1), layout.topMargin + layout.containerSize(2)];
@@ -1234,11 +1211,10 @@ end
 function settings = getBuildSettings()
 settings = struct( ...
     'modelName', defaultHeartModelName(), ...
-    'dictPath',"",...
+    'slddHeart',"",...
     'cfg',struct,...
-    'systemPath', "", ...
+    'modelPath', "models", ...
     'standalone', true, ...
-    'openModel', false, ...
     'apTargetNodes', "", ...
     'vpTargetNodes', "");
 end
@@ -1257,7 +1233,7 @@ end
 
 function value = castBuildSetting(optionName, value)
 switch optionName
-    case {'heartModel', 'systemPath'}
+    case {'heartModel', 'modelPath'}
         value = string(value);
     case 'standalone'
         value = logical(value);
@@ -1353,9 +1329,9 @@ function tf = rectanglesOverlap(a, b)
 tf = a(1) < b(3) && a(3) > b(1) && a(2) < b(4) && a(4) > b(2);
 end
 
-function attachDict(heartModel, dictPath)
-dictPath = resolveHeartDictionaryPath(dictPath);
-closeShadowingDictionariesForTarget(dictPath);
+function attachDict(heartModel, slddHeart)
+dictPath = resolveHeartDictionaryPath(slddHeart);
+closeShadowingDictionariesForTarget(slddHeart);
 [dictFolder, dictName, dictExt] = fileparts(dictPath);
 if strlength(string(dictFolder)) > 0
     addpath(dictFolder);
@@ -1396,8 +1372,8 @@ for i=1:numel(bindings)
 end
 end
 
-function resolvedPath = resolveHeartDictionaryPath(dictPath)
-requested = string(dictPath);
+function resolvedPath = resolveHeartDictionaryPath(slddHeart)
+requested = string(slddHeart);
 if isfile(char(requested))
    resolvedPath = char(requested);
    return;
@@ -1410,7 +1386,7 @@ if isfile(candidate)
    return;
 end
 
-resolvedPath = char(requested);
+error('Cannot find %s',requested);
 end
 
 function closeShadowingDictionariesForTarget(targetPath)

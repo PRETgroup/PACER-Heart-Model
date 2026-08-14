@@ -1,5 +1,6 @@
 function [leadCfgBus,leadGroup] = read_leads(xsheetfile, sheetName, dataRange)
-leads = readtable(xsheetfile,'Sheet', sheetName,Range = dataRange);
+resolvedPath=resolveFilePath(xsheetfile);
+leads = readtable(resolvedPath,'Sheet', sheetName,Range = dataRange);
 requiredCols = ["Type","x","y","z"];
 missingCols = setdiff(requiredCols, string(leads.Properties.VariableNames));
 if ~isempty(missingCols)
