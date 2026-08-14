@@ -84,6 +84,7 @@ references=[
     "SharedConfigData.sldd"
     "Sensing_dd.sldd"
     "Wavefront_type.sldd"
+    "PM_DDD_dd.sldd"
 ];
 
 existing = string(dd.DataSources);
