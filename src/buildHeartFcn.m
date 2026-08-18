@@ -82,10 +82,7 @@ end
 validateBuildInputs(G, refmodules);
 moduleRefs = normalizeModules(refmodules);
 loadModuleSources(moduleRefs);
-heartModel = char(settings.modelName);
-if bdIsLoaded(heartModel)
-    close_system(heartModel, 0);
-end
+heartModel = defaultHeartModelName(char(settings.modelName));% Generate the unique name
 new_system(heartModel);
 layout = getLayout();
 heartSubsystem = createHeartContainer(heartModel, layout);
@@ -1276,7 +1273,7 @@ switch optionName
 end
 end
 
-function modelName = defaultHeartModelName()
+function modelName = defaultHeartModelName(baseName)
 %This function generates a default Simulink model name that is guaranteed
 % not to conflict with any existing model in the current MATLAB project.
 proj = currentProject;
@@ -1284,7 +1281,11 @@ slxFiles = dir(fullfile(proj.RootFolder, "**", "*.slx"));
 mdlFiles = dir(fullfile(proj.RootFolder, "**", "*.mdl"));
 files = [slxFiles; mdlFiles];
 modelNames = erase(string({files.name}), [".slx" ".mdl"]);
-modelName = matlab.lang.makeUniqueStrings("Heart_default", modelNames);
+if nargin < 1
+    modelName = matlab.lang.makeUniqueStrings("Heart_default", modelNames);
+else
+    modelName = matlab.lang.makeUniqueStrings(baseName, modelNames);
+end
 end
 
 function stripped = stripFileExtension(value)
