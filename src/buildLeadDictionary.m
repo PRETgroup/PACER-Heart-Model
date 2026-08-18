@@ -1,12 +1,11 @@
-function buildLeadDictionary(leadCfgBus,leadDictName)
+function buildLeadDictionary(leadCfgBus,leadGroup,leadDictName)
 proj=currentProject;
 root=proj.RootFolder;
 dictPath=fullfile(...
     root,...
     "Data",...
-    "sldd_component",...
+    "sldd_system",...
     leadDictName);
-closeConflictingOpenDictionaries(dictPath, leadDictName);
 %% Create dictionary
 if isfile(dictPath)
     warning('%s exists.',dictPath)
@@ -44,6 +43,13 @@ catch
     warning('Lead_group already exists')
     entry = getEntry(design, 'Lead_group');
     setValue(entry, leadCfgBus);      % Replace the existing value
+end
+try
+    addEntry(design, 'Leads', leadGroup);   
+catch
+    warning('Leads already exists')
+    entry = getEntry(design, 'Leads');
+    setValue(entry, leadGroup);    
 end
 saveChanges(dd);
 close(dd);

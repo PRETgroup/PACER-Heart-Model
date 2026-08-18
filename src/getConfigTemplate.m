@@ -1,11 +1,14 @@
-proj = currentProject;
-% 1. Define your dictionary and the name for your configuration
-dictName = fullfile(proj.RootFolder,'Data/sldd_component/SharedConfigData.sldd'); 
-configName = 'MasterConfig';
+function getConfigTemplate(dictName,configName,configTemplateModel)
+proj=currentProject;
+root=proj.RootFolder;
+dictPath=fullfile(...
+    root,...
+    "Data",...
+    "sldd_system",...
+    dictName);
+closeConflictingOpenDictionaries(dictPath, dictName);
 Simulink.data.dictionary.closeAll;
-% 2. Get the configuration set you want to save
-% (e.g., extracting it from an existing model)
-configTemplateModel='Node_N';
+
 load_system(configTemplateModel);
 myConfig = copy(getActiveConfigSet(configTemplateModel));
 
@@ -13,10 +16,10 @@ myConfig = copy(getActiveConfigSet(configTemplateModel));
 myConfig.Name = configName;
 
 % 3. Create a new dictionary or open an existing one
-if ~exist(dictName, 'file')
-    dictObj = Simulink.data.dictionary.create(dictName);
+if ~exist(dictPath, 'file')
+    dictObj = Simulink.data.dictionary.create(dictPath);
 else
-    dictObj = Simulink.data.dictionary.open(dictName);
+    dictObj = Simulink.data.dictionary.open(dictPath);
 end
 
 % 4. Access the specific section for Configurations
@@ -37,3 +40,4 @@ end
 % 6. Save changes and close the dictionary to free memory
 saveChanges(dictObj);
 close(dictObj);
+end

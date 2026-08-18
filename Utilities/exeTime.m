@@ -1,9 +1,8 @@
 % Configuration
 numIterations = 10;
 proj = currentProject;
-% 1. Create a bulletproof absolute path for Windows
-% This automatically builds: C:\Your\Current\Path\CodeGeneration\Heart3D_N43.exe
-exePath = fullfile(proj.RootFolder, 'CodeGeneration', 'Heart3D_N43.exe');
+
+exePath = fullfile(proj.RootFolder, 'CodeGeneration', 'Heart3D_full.exe');
 % Wrap the path in quotes to protect against spaces in folder names
 sysCmd = sprintf('"%s"', exePath);
 exe_time_0 = zeros(1, numIterations);

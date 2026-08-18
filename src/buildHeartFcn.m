@@ -87,8 +87,8 @@ if bdIsLoaded(heartModel)
     close_system(heartModel, 0);
 end
 new_system(heartModel);
-configHeartModel(heartModel);
 layout = getLayout();
+heartSubsystem = createHeartContainer(heartModel, layout);
 %% Prepare the specs
 nodeCount = numnodes(G);
 pathCount = numedges(G);
@@ -99,43 +99,30 @@ validatePacingTargetNodes(settings, nodeNames);
 [startIdx, endIdx] = findedge(G);
 dipoles = getDipoles(G, startIdx, endIdx);
 useParallel = canUseParallel(nodeCount, pathCount);
-
 nodeSpecs = cell(nodeCount, 1);
+pathSpecs = cell(pathCount, 1);
+electrodeSpecs = cell(pathCount, 1);
 if useParallel
     parfor nodeIdx = 1:nodeCount
         nodeSpecs{nodeIdx} = makeNodeSpec(nodeIdx, nodeNames(nodeIdx), ...
             nodeTypes(nodeIdx), moduleRefs, layout);
+    end
+    parfor pathIdx = 1:pathCount
+        pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
+            endIdx(pathIdx), nodeNames, nodeCoordinates,  ...
+            moduleRefs, layout);
+        electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
+            dipoles{pathIdx}, moduleRefs, layout);
     end
 else
     for nodeIdx = 1:nodeCount
         nodeSpecs{nodeIdx} = makeNodeSpec(nodeIdx, nodeNames(nodeIdx), ...
             nodeTypes(nodeIdx), moduleRefs, layout);
     end
-end
-
-pathSpecs = cell(pathCount, 1);
-if useParallel
-    parfor pathIdx = 1:pathCount
-        pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
-            endIdx(pathIdx), nodeNames, nodeCoordinates,  ...
-            moduleRefs, layout);
-    end
-else
     for pathIdx = 1:pathCount
         pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
             endIdx(pathIdx), nodeNames, nodeCoordinates,  ...
             moduleRefs, layout);
-    end
-end
-
-electrodeSpecs = cell(pathCount, 1);
-if useParallel
-    parfor pathIdx = 1:pathCount
-        electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
-            dipoles{pathIdx}, moduleRefs, layout);
-    end
-else
-    for pathIdx = 1:pathCount
         electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
             dipoles{pathIdx}, moduleRefs, layout);
     end
@@ -147,22 +134,18 @@ parameterSpecs=[
     electrodeSpecs
     ];
 %% assemble the models
-heartSubsystem = createHeartContainer(heartModel, layout);
 addNodeAssembly(heartSubsystem, nodeSpecs);
 addPathAssembly(heartSubsystem, pathSpecs);
 addElectrodeAssembly(heartSubsystem, electrodeSpecs);
 addJointAssembly(heartSubsystem, nodeNames, jointTags, layout, settings);
 addControlInputs(heartSubsystem, layout);
 addOutputs(heartSubsystem, nodeSpecs, electrodeSpecs, nodeCount, pathCount, layout);
-%%  link the dictionary to the model
-attachDict(heartModel, settings.slddHeart)
 %%save parameters to the model workspace;
 mdlWks=get_param(heartModel,"ModelWorkspace");
 assignParameters(mdlWks,parameterSpecs)
 
 if settings.standalone
     addStandaloneIo(heartModel, heartSubsystem, layout);
-    assignin(mdlWks,"cfg",settings.cfg);
 end
 
 if strlength(settings.modelPath) > 0
@@ -179,7 +162,6 @@ heart = struct( ...
     'electrodeSpecs', {electrodeSpecs});
 end
 %----------------------------------------- helper functions -----
-
 
 function validateBuildInputs(G, refmodules)
 if ~isa(G, 'graph')
@@ -239,22 +221,6 @@ for idx = 1:numel(moduleRefs)
     moduleRefs(idx).module = string(moduleRefs(idx).module);
     moduleRefs(idx).type = lower(string(moduleRefs(idx).type));
     moduleRefs(idx).mtype = upper(string(moduleRefs(idx).mtype));
-end
-end
-
-function loadModuleSources(moduleRefs)
-sources = unique([string({moduleRefs.module})]);
-roots = strings(size(sources));
-for k = 1:numel(sources)
-    if contains(sources(k), "/")
-        roots(k) = extractBefore(sources(k), "/");
-    else
-        roots(k) = stripFileExtension(sources(k));
-    end
-end
-roots = unique(roots);
-for k = 1:numel(roots)
-    load_system(char(roots(k)));
 end
 end
 
@@ -407,18 +373,6 @@ for pathIdx = 1:numel(pathSpecs)
 end
 end
 
-function configHeartModel(heartModel)
-%  Create the Configuration Reference
-configRef = Simulink.ConfigSetRef();
-configRef.Name = 'SharedConfigRef';
-configRef.WSVarName = 'MasterConfig';
-
-%  Attach the reference to the top-level model
-attachConfigSet(heartModel, copy(configRef), true);
-setActiveConfigSet(heartModel, 'SharedConfigRef');
-
-end
-
 function heartSubsystem = createHeartContainer(heartModel, layout)
 blockName = sprintf('%s/Heart', heartModel);
 add_block('simulink/Ports & Subsystems/Subsystem', blockName);
@@ -432,132 +386,199 @@ delete_block(sprintf('%s/Out1', heartSubsystem));
 end
 
 function addNodeAssembly(heartSubsystem, nodeSpecs)
+% Initialize the template tracker to bypass find_system inside the loop
+cfgTemplate = "";
 for idx = 1:numel(nodeSpecs)
     spec = nodeSpecs{idx};
-    blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
+    blockName = spec.blockName;
+    cellTag = spec.cellTag;
+    pathTag = spec.pathTag;
+
+    blockPath = sprintf('%s/%s', heartSubsystem, blockName);
+    delayName = sprintf('CellDelay_%s', blockName);
+    delayPath = sprintf('%s/%s', heartSubsystem, delayName);
+    cellGotoPath = sprintf('%s/%s', heartSubsystem, cellTag);
+
     addModuleBlock(spec.module, blockPath);
     set_param(blockPath, 'Position', spec.position);
-    addConfigBusElementBlock(heartSubsystem, spec.cfgBusBlockName, spec.cfgBusElement, spec.position, 2, 1, ...
-        spec.blockName, 1);
-    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', spec.blockName));
 
-    addGotoBlock(heartSubsystem, spec.cellTag, spec.cellTag, spec.position, 1, 1, true);
+    % Capture the template and pass it into the next iteration
+    cfgTemplate = addConfigBusElementBlock(heartSubsystem, spec.cfgBusBlockName, ...
+        spec.cfgBusElement, spec.position, 2, 1, cfgTemplate, spec.blockName, 1);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', blockName));
 
-    cellGotoPath = sprintf('%s/%s', heartSubsystem, spec.cellTag);
-    gotoPos = get_param(cellGotoPath, 'Position');
+    % --- OPTIMIZED LAYOUT SECTION ---
+
+    % 1. Add Goto Block and capture its starting position immediately
+    basePos = addGotoBlock(heartSubsystem, cellTag, cellTag, spec.position, 1, 1, true);
+
+    % 2. Calculate the shifted position for the Goto block and position for the Delay
     gotoShift = 45;
-    set_param(cellGotoPath, 'Position', [gotoPos(1) + gotoShift, gotoPos(2), ...
-        gotoPos(3) + gotoShift, gotoPos(4)]);
+    finalGotoPos = [basePos(1) + gotoShift, basePos(2), basePos(3) + gotoShift, basePos(4)];
+    delayPos = [basePos(1), basePos(2), basePos(1) + 30, basePos(4)];
 
-    delayName = sprintf('CellDelay_%s', spec.blockName);
-    delayPath = sprintf('%s/%s', heartSubsystem, delayName);
-    add_block('simulink/Discrete/Unit Delay', delayPath);
-    set_param(delayPath, 'Position', [gotoPos(1), gotoPos(2), gotoPos(1) + 30, gotoPos(4)], ...
+    % 3. Shift the Goto Block
+    set_param(cellGotoPath, 'Position', finalGotoPos);
+
+    % 4. Create the Unit Delay in its final spot instantly
+    add_block('simulink/Discrete/Unit Delay', delayPath, ...
+        'Position', delayPos, ...
         'ShowName', 'off');
 
-    addLineSafe(heartSubsystem, sprintf('%s/1', spec.blockName), sprintf('%s/1', delayName));
-    addLineSafe(heartSubsystem, sprintf('%s/1', delayName), sprintf('%s/1', spec.cellTag));
-    addFromBlock(heartSubsystem, spec.pathTag, spec.pathTag, spec.position, 2, 2, 2, ...
-        spec.blockName, 2);
-    addLineSafe(heartSubsystem, sprintf('%s/1', spec.pathTag), sprintf('%s/2', spec.blockName));
+    % --------------------------------
+
+    addLineSafe(heartSubsystem, sprintf('%s/1', blockName), sprintf('%s/1', delayName));
+    addLineSafe(heartSubsystem, sprintf('%s/1', delayName), sprintf('%s/1', cellTag));
+
+    addFromBlock(heartSubsystem, pathTag, pathTag, spec.position, 2, 2, 2, blockName, 2);
+    addLineSafe(heartSubsystem, sprintf('%s/1', pathTag), sprintf('%s/2', blockName));
 end
 end
 
 function addPathAssembly(heartSubsystem, pathSpecs)
+% Initialize the template tracker to bypass find_system inside the loop
+cfgTemplate = "";
 for idx = 1:numel(pathSpecs)
     spec = pathSpecs{idx};
-    blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
+
+    % Cache common properties to reduce struct lookups and memory overhead
+    blockName = spec.blockName;
+    pos = spec.position;
+    blockPath = sprintf('%s/%s', heartSubsystem, blockName);
+
+    % 1. Add the main module block
     addModuleBlock(spec.module, blockPath);
-    set_param(blockPath, 'Position', spec.position);
+    set_param(blockPath, 'Position', pos);
     applyParameterBindingsToBlock(blockPath, spec.parameterBindings);
 
-    addConfigBusElementBlock(heartSubsystem, spec.cfgBusBlockName, spec.cfgBusElement, spec.position, 3, 1, ...
-        spec.blockName, 1);
-    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', spec.blockName));
+    % 2. Add Config Bus Element using the FAST template method
+    % (Make sure addConfigBusElementBlock takes and returns cfgTemplate!)
+    cfgTemplate = addConfigBusElementBlock(heartSubsystem, ...
+        spec.cfgBusBlockName, spec.cfgBusElement, pos, 3, 1, ...
+        cfgTemplate, blockName, 1);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', blockName));
 
-    addGotoBlock(heartSubsystem, spec.reverseTag, spec.reverseTag, spec.position, 3, 1, true);
-    addLineSafe(heartSubsystem, sprintf('%s/1', spec.blockName), sprintf('%s/1', spec.reverseTag));
+    % 3. Add Goto Blocks (Outputs)
+    addGotoBlock(heartSubsystem, spec.reverseTag, spec.reverseTag, pos, 3, 1, true);
+    addLineSafe(heartSubsystem, sprintf('%s/1', blockName), sprintf('%s/1', spec.reverseTag));
 
-    addGotoBlock(heartSubsystem, spec.forwardTag, spec.forwardTag, spec.position, 3, 2, true);
-    addLineSafe(heartSubsystem, sprintf('%s/2', spec.blockName), sprintf('%s/1', spec.forwardTag));
+    addGotoBlock(heartSubsystem, spec.forwardTag, spec.forwardTag, pos, 3, 2, true);
+    addLineSafe(heartSubsystem, sprintf('%s/2', blockName), sprintf('%s/1', spec.forwardTag));
 
-    addGotoBlock(heartSubsystem, spec.probeTag, spec.probeTag, spec.position, 3, 3, true);
-    addLineSafe(heartSubsystem, sprintf('%s/3', spec.blockName), sprintf('%s/1', spec.probeTag));
+    addGotoBlock(heartSubsystem, spec.probeTag, spec.probeTag, pos, 3, 3, true);
+    addLineSafe(heartSubsystem, sprintf('%s/3', blockName), sprintf('%s/1', spec.probeTag));
 
-    addFromBlock(heartSubsystem, spec.cellITagName_block, spec.cellITagName, ...
-        spec.position, 3, 2, 2, spec.blockName, 2);
-    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellITagName_block), sprintf('%s/2', spec.blockName));
+    % 4. Add From Blocks (Inputs)
+    addFromBlock(heartSubsystem, spec.cellITagName_block, spec.cellITagName, pos, 3, 2, 2, blockName, 2);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellITagName_block), sprintf('%s/2', blockName));
 
-    addFromBlock(heartSubsystem, spec.cellJTagName_block, spec.cellJTagName,...
-        spec.position, 3, 3, 3, spec.blockName, 3);
-    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellJTagName_block), sprintf('%s/3', spec.blockName));
+    addFromBlock(heartSubsystem, spec.cellJTagName_block, spec.cellJTagName, pos, 3, 3, 3, blockName, 3);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cellJTagName_block), sprintf('%s/3', blockName));
 end
 end
 
 function addElectrodeAssembly(heartSubsystem, electrodeSpecs)
+% Cache constant tags outside the loop
+leadsTag = 'Leads';
+
 for idx = 1:numel(electrodeSpecs)
     spec = electrodeSpecs{idx};
-    blockPath = sprintf('%s/%s', heartSubsystem, spec.blockName);
-    addModuleBlock(spec.module, blockPath);
-    set_param(blockPath, 'Position', spec.position);
-    applyParameterBindingsToBlock(blockPath, spec.parameterBindings); 
-    addFromBlock(heartSubsystem, sprintf('FromPath_%d', spec.index), spec.pathTag, ...
-        spec.position, 2, 1, 1, spec.blockName, 1);
-    addLineSafe(heartSubsystem, sprintf('FromPath_%d/1', spec.index), sprintf('%s/1', spec.blockName));
 
-    addFromBlock(heartSubsystem, sprintf('Leads_%d', spec.index), 'Leads', ...
-        spec.position, 2, 2, 2, spec.blockName, 2);
-    addLineSafe(heartSubsystem, sprintf('Leads_%d/1', spec.index), sprintf('%s/2', spec.blockName));
+    % 1. Cache properties to avoid repeated MATLAB struct dereferencing
+    blockName = spec.blockName;
+    pos = spec.position;
+    idxNum = spec.index;
+
+    blockPath = sprintf('%s/%s', heartSubsystem, blockName);
+
+    % 2. Create and configure the main module
+    addModuleBlock(spec.module, blockPath);
+    set_param(blockPath, 'Position', pos);
+    applyParameterBindingsToBlock(blockPath, spec.parameterBindings);
+
+    % 3. Pre-format names to eliminate duplicate sprintf calls
+    fromPathName = sprintf('FromPath_%d', idxNum);
+    leadsName = sprintf('Leads_%d', idxNum);
+
+    % 4. Add From blocks and route lines using cached strings
+    addFromBlock(heartSubsystem, fromPathName, spec.pathTag, pos, 2, 1, 1, blockName, 1);
+    addLineSafe(heartSubsystem, sprintf('%s/1', fromPathName), sprintf('%s/1', blockName));
+
+    addFromBlock(heartSubsystem, leadsName, leadsTag, pos, 2, 2, 2, blockName, 2);
+    addLineSafe(heartSubsystem, sprintf('%s/1', leadsName), sprintf('%s/2', blockName));
 end
 end
 
 function addJointAssembly(heartSubsystem, nodeNames, jointTags, layout, settings)
 orTop = 0;
+
+% 1. MASSIVE OPTIMIZATION: Convert arrays to uppercase ONCE outside the loop
+apTargets = upper(string(settings.apTargetNodes));
+vpTargets = upper(string(settings.vpTargetNodes));
+
+% 2. Cache layout struct values to prevent repeated memory lookups
+lLeft       = layout.leftMargin;
+lTop        = layout.topMargin;
+lColOffset  = layout.jointColumnOffset;
+lTagSpacing = layout.tagSpacing;
+lTagWidth   = layout.tagWidth;
+lTagLength  = layout.tagLength;
+
 for nodeIdx = 1:numel(jointTags)
     nodeTagList = jointTags{nodeIdx};
     nodeName = string(nodeNames(nodeIdx));
-    isApNode = ismember(upper(nodeName), upper(settings.apTargetNodes));
-    isVpNode = ismember(upper(nodeName), upper(settings.vpTargetNodes));
+
+    % Fast string comparison
+    upperNodeName = upper(nodeName);
+    isApNode = ismember(upperNodeName, apTargets);
+    isVpNode = ismember(upperNodeName, vpTargets);
+
     extraInputs = double(isApNode) + double(isVpNode);
     totalInputs = numel(nodeTagList) + extraInputs;
 
-    left = layout.leftMargin + layout.jointColumnOffset;
-    top = layout.topMargin + orTop;
-    orTop = orTop + layout.tagSpacing * max(totalInputs, 1) + 15;
+    left = lLeft + lColOffset;
+    top = lTop + orTop;
+    orTop = orTop + lTagSpacing * max(totalInputs, 1) + 15;
 
     pathGotoName = sprintf('Path%d', nodeIdx);
     pathGotoPath = sprintf('%s/%s', heartSubsystem, pathGotoName);
-    add_block('simulink/Signal Routing/Goto', pathGotoPath);
 
-    sumBlockName = sprintf('Node%d_OR', nodeIdx);
-    sumBlockPath = sprintf('%s/%s', heartSubsystem, sumBlockName);
-    sumLeft = left + layout.tagLength + 20;
-    pathGotoLeft = sumLeft + layout.tagWidth + 25;
+    sumLeft = left + lTagLength + 20;
+    pathGotoLeft = sumLeft + lTagWidth + 25;
+    nodeGotoTag = sprintf('gv_%s', makeValidBlockName(nodeName));
 
+    % 3. Create Sum and Goto Blocks in a SINGLE step (No set_param)
     if totalInputs > 1
-        centerY = top + (layout.tagSpacing * totalInputs / 2) - 10;
-        add_block('simulink/Math Operations/Sum', sumBlockPath);
-        set_param(sumBlockPath, 'Inputs', num2str(totalInputs), ...
-            'Position', [sumLeft, centerY, sumLeft + layout.tagWidth, centerY + layout.tagWidth]);
-        nodeGotoTag = sprintf('gv_%s', makeValidBlockName(nodeName));
-        set_param(pathGotoPath, 'Position', [pathGotoLeft, centerY, pathGotoLeft + layout.tagLength, centerY + layout.tagWidth], ...
-            'GotoTag', nodeGotoTag, 'ShowName', 'off');
+        centerY = top + (lTagSpacing * totalInputs / 2) - 10;
+        sumBlockName = sprintf('Node%d_OR', nodeIdx);
+        sumBlockPath = sprintf('%s/%s', heartSubsystem, sumBlockName);
+
+        add_block('simulink/Math Operations/Sum', sumBlockPath, ...
+            'Inputs', num2str(totalInputs), ...
+            'Position', [sumLeft, centerY, sumLeft + lTagWidth, centerY + lTagWidth]);
     else
         centerY = top;
-        nodeGotoTag = sprintf('gv_%s', makeValidBlockName(nodeName));
-        set_param(pathGotoPath, 'Position', [pathGotoLeft, centerY, pathGotoLeft + layout.tagLength, centerY + layout.tagWidth], ...
-            'GotoTag', nodeGotoTag, 'ShowName', 'off');
+        sumBlockName = ""; % Initialize to prevent reference errors later
     end
+
+    add_block('simulink/Signal Routing/Goto', pathGotoPath, ...
+        'Position', [pathGotoLeft, centerY, pathGotoLeft + lTagLength, centerY + lTagWidth], ...
+        'GotoTag', nodeGotoTag, ...
+        'ShowName', 'off');
 
     inputPort = 1;
     directSource = "";
+
+    % 4. Create From blocks in a SINGLE step
     for tagIdx = 1:numel(nodeTagList)
         fromName = sprintf('Cell%d_%d', nodeIdx, tagIdx);
         fromPath = sprintf('%s/%s', heartSubsystem, fromName);
-        add_block('simulink/Signal Routing/From', fromPath);
-        set_param(fromPath, 'GotoTag', nodeTagList{tagIdx}, 'ShowName', 'off', ...
-            'Position', [left, top + (tagIdx - 1) * layout.tagSpacing, ...
-            left + layout.tagLength, top + (tagIdx - 1) * layout.tagSpacing + layout.tagWidth]);
+        fromTop = top + (tagIdx - 1) * lTagSpacing;
+
+        add_block('simulink/Signal Routing/From', fromPath, ...
+            'GotoTag', nodeTagList{tagIdx}, ...
+            'Position', [left, fromTop, left + lTagLength, fromTop + lTagWidth], ...
+            'ShowName', 'off');
 
         if totalInputs > 1
             addLineSafe(heartSubsystem, sprintf('%s/1', fromName), sprintf('%s/%d', sumBlockName, inputPort));
@@ -573,6 +594,7 @@ for nodeIdx = 1:numel(jointTags)
             pacingOffset, layout, totalInputs, sumBlockName, inputPort, directSource);
         pacingOffset = pacingOffset + 1;
     end
+
     if isVpNode
         if totalInputs > 1
             addPacingSource(heartSubsystem, 'VP', nodeIdx, left, top, ...
@@ -583,6 +605,7 @@ for nodeIdx = 1:numel(jointTags)
         end
     end
 
+    % Route final output or Handle Zero-Input Edge Case seamlessly
     if totalInputs > 1
         addLineSafe(heartSubsystem, sprintf('%s/1', sumBlockName), sprintf('%s/1', pathGotoName));
     elseif totalInputs == 1
@@ -590,9 +613,12 @@ for nodeIdx = 1:numel(jointTags)
     else
         zeroName = sprintf('PathZero_%d', nodeIdx);
         zeroPath = sprintf('%s/%s', heartSubsystem, zeroName);
-        add_block('simulink/Sources/Constant', zeroPath);
-        set_param(zeroPath, 'Value', '0', 'ShowName', 'off', ...
-            'Position', [left, top, left + 20, top + layout.tagWidth]);
+
+        add_block('simulink/Sources/Constant', zeroPath, ...
+            'Value', '0', ...
+            'Position', [left, top, left + 20, top + lTagWidth], ...
+            'ShowName', 'off');
+
         addLineSafe(heartSubsystem, sprintf('%s/1', zeroName), sprintf('%s/1', pathGotoName));
     end
 end
@@ -618,27 +644,20 @@ end
 function addControlInputs(heartSubsystem, layout)
 left = layout.leftMargin + layout.configColumnOffset;
 
-leadsGoto = sprintf('%s/Leads', heartSubsystem);
+leadsGoto = sprintf('%s/LeadsGoto', heartSubsystem);
 add_block('simulink/Signal Routing/Goto', leadsGoto);
 set_param(leadsGoto, 'Position', [left + 20, layout.topMargin + 20, left + 20 + layout.tagLength, layout.topMargin + 20 + layout.tagWidth], ...
     'GotoTag', 'Leads', 'ShowName', 'off');
 
-cfgLeads = sprintf('%s/cfgLeads', heartSubsystem);
-existingCfgBlocks = find_system(heartSubsystem, 'SearchDepth', 1, 'Regexp', 'on', 'Name', '^cfg_');
-if isempty(existingCfgBlocks)
-    add_block('simulink/Ports & Subsystems/In Bus Element', cfgLeads, ...
-        'PortName', 'cfg', 'Element', 'Leads');
-else
-    add_block(existingCfgBlocks{1}, cfgLeads, 'MakeNameUnique', 'off');
-    set_param(cfgLeads, 'Element', 'Leads');
-end
-set_param(cfgLeads, 'Position', [left - 65, layout.topMargin + 20, left - 15, layout.topMargin + 20 + layout.tagWidth], ...
-    'ShowName', 'off');
-addLineSafe(heartSubsystem, 'cfgLeads/1', 'Leads/1');
+add_block('simulink/Sources/In1', sprintf('%s/Leads', heartSubsystem), ...
+    'Port', '2', ...
+    'Position', [left - 65, layout.topMargin + 20, left - 15, layout.topMargin + 20 + layout.tagWidth]);
+addLineSafe(heartSubsystem, 'Leads/1', 'LeadsGoto/1');
 
 paceIn = sprintf('%s/Pace', heartSubsystem);
-add_block('simulink/Sources/In1', paceIn);
-set_param(paceIn, 'Position', [left - 65, layout.topMargin + 80, left - 15, layout.topMargin + 80 + layout.tagWidth]);
+add_block('simulink/Sources/In1', paceIn, ...
+    'Port', '3', ...
+    'Position', [left - 65, layout.topMargin + 80, left - 15, layout.topMargin + 80 + layout.tagWidth]);
 
 paceBlock = sprintf('%s/Pacing', heartSubsystem);
 add_block('simulink/Signal Routing/Demux', paceBlock);
@@ -660,8 +679,19 @@ end
 
 function addOutputs(heartSubsystem, nodeSpecs, electrodeSpecs, nodeCount, pathCount, layout)
 left = layout.leftMargin + layout.outputColumnOffset;
+
+% --- Optimization: Pre-check or create template block sources once ---
 cellsTemplateBlock = "";
+existingCells = find_system(heartSubsystem, 'SearchDepth', 1, 'Regexp', 'on', 'Name', '^Cells_');
+if ~isempty(existingCells)
+    cellsTemplateBlock = string(existingCells{1});
+end
+
 wavesTemplateBlock = "";
+existingWaves = find_system(heartSubsystem, 'SearchDepth', 1, 'Regexp', 'on', 'Name', '^waves_');
+if ~isempty(existingWaves)
+    wavesTemplateBlock = string(existingWaves{1});
+end
 
 for nodeIdx = 1:nodeCount
     nodeSpec = nodeSpecs{nodeIdx};
@@ -671,7 +701,7 @@ for nodeIdx = 1:nodeCount
     cellTagY = cellTagPos(4) + 5;
 
     outBusName = sprintf('Cells_%s', nodeSpec.cellTag);
-    cellsTemplateBlock = addCellsOutputBusElement(heartSubsystem, outBusName, nodeSpec.cellTag, ...
+    [cellsTemplateBlock, ~] = addCellsOutputBusElement(heartSubsystem, outBusName, nodeSpec.cellTag, ...
         cellTagX, cellTagY, cellsTemplateBlock);
     addLineSafe(heartSubsystem, sprintf('%s/1', nodeSpec.blockName), sprintf('%s/1', outBusName));
 end
@@ -680,19 +710,19 @@ for pathIdx = 1:pathCount
     electrodeSpec = electrodeSpecs{pathIdx};
     y0 = electrodeSpec.position(2) + layout.tagWidth;
 
-    % Add Goto label for EGM_i (placed right of electrode block)
+    % Add Goto label for EGM_i
     addGotoBlock(heartSubsystem, electrodeSpec.egmTag, electrodeSpec.egmTag, ...
         electrodeSpec.position, 2, 1, true);
     addLineSafe(heartSubsystem, sprintf('%s/1', electrodeSpec.blockName), ...
         sprintf('%s/1', electrodeSpec.egmTag));
 
     outBusName = sprintf('waves_%s', electrodeSpec.waveTag);
-    wavesTemplateBlock = addOutputBusElementBlock(heartSubsystem, outBusName, 'waves', ...
+    [wavesTemplateBlock, ~] = addOutputBusElementBlock(heartSubsystem, outBusName, 'waves', ...
         electrodeSpec.waveTag, electrodeSpec.blockName, 2, left, y0, wavesTemplateBlock);
     addLineSafe(heartSubsystem, sprintf('%s/2', electrodeSpec.blockName), sprintf('%s/1', outBusName));
 end
 
-% Sum all EGM_i via From labels and output as a single EGMs outport (port 2)
+% Summation logic remains unchanged...
 if pathCount > 0
     egmYPositions = zeros(pathCount, 1);
     for pathIdx = 1:pathCount
@@ -726,58 +756,41 @@ if pathCount > 0
 end
 end
 
-function templateBlockPath = addCellsOutputBusElement(heartSubsystem, blockName, elementName, ...
+function [templateBlockPath, blockPath] = addCellsOutputBusElement(heartSubsystem, blockName, elementName, ...
     tagX, tagY, templateBlockPath)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
-if strlength(templateBlockPath) == 0
-    existingOutBusBlocks = find_system(heartSubsystem, 'SearchDepth', 1, ...
-        'Regexp', 'on', 'Name', '^Cells_');
-else
-    existingOutBusBlocks = {char(templateBlockPath)};
-end
 
-if isempty(existingOutBusBlocks)
+if strlength(templateBlockPath) == 0 || ~bdIsLoaded(extractBefore(templateBlockPath, '/'))
     add_block('simulink/Ports & Subsystems/Out Bus Element', blockPath, ...
         'PortName', 'Cells', 'Element', elementName);
+    templateBlockPath = string(blockPath);
 else
-    add_block(existingOutBusBlocks{1}, blockPath, 'MakeNameUnique', 'off');
+    add_block(char(templateBlockPath), blockPath, 'MakeNameUnique', 'off');
     set_param(blockPath, 'Element', elementName);
 end
-templateBlockPath = string(blockPath);
 
 tagLength = computeTagLength(sprintf('Cells.%s', elementName));
-left = tagX;
-y0 = tagY;
-%y0 = y0 + busElementVerticalNudge('Cells', elementName);
-
-set_param(blockPath, 'Position', [left, y0, left + tagLength, y0 + 20], 'ShowName', 'off');
+set_param(blockPath, 'Position', [tagX, tagY, tagX + tagLength, tagY + 20], 'ShowName', 'off');
 end
 
-function templateBlockPath = addOutputBusElementBlock(heartSubsystem, blockName, ...
+function [templateBlockPath, blockPath] = addOutputBusElementBlock(heartSubsystem, blockName, ...
     portName, elementName, sourceBlockName, sourcePortIndex, fallbackLeft, ...
     fallbackY, templateBlockPath)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
-if strlength(templateBlockPath) == 0
-    existingOutBusBlocks = find_system(heartSubsystem, 'SearchDepth', 1, ...
-        'Regexp', 'on', 'Name', sprintf('^%s_', portName));
-else
-    existingOutBusBlocks = {char(templateBlockPath)};
-end
 
-if isempty(existingOutBusBlocks)
+if strlength(templateBlockPath) == 0 || ~bdIsLoaded(extractBefore(templateBlockPath, '/'))
     add_block('simulink/Ports & Subsystems/Out Bus Element', blockPath, ...
         'PortName', portName, 'Element', elementName);
+    templateBlockPath = string(blockPath);
 else
-    add_block(existingOutBusBlocks{1}, blockPath, 'MakeNameUnique', 'off');
+    add_block(char(templateBlockPath), blockPath, 'MakeNameUnique', 'off');
     set_param(blockPath, 'Element', elementName);
 end
-templateBlockPath = string(blockPath);
 
 tagLength = computeTagLength(sprintf('%s.%s', portName, elementName));
 [left, y0] = alignNearSourceOutport(heartSubsystem, sourceBlockName, sourcePortIndex, ...
     fallbackLeft, fallbackY, 20);
 [left, y0] = shiftRightToAvoidOverlap(heartSubsystem, blockPath, left, y0, tagLength, 20);
-%y0 = y0 + busElementVerticalNudge(portName, elementName);
 set_param(blockPath, 'Position', [left, y0, left + tagLength, y0 + 20], 'ShowName', 'off');
 end
 
@@ -787,6 +800,7 @@ containerPos = [layout.leftMargin, layout.topMargin, ...
 heartPorts = get_param(heartSubsystem, 'PortHandles');
 
 cfgInport = [];
+leadsInport = [];
 paceInport = [];
 cellsOutport = [];
 egmsOutport = [];
@@ -796,7 +810,10 @@ if isfield(heartPorts, 'Inport') && numel(heartPorts.Inport) >= 1
     cfgInport = heartPorts.Inport(1);
 end
 if isfield(heartPorts, 'Inport') && numel(heartPorts.Inport) >= 2
-    paceInport = heartPorts.Inport(2);
+    leadsInport = heartPorts.Inport(2);
+end
+if isfield(heartPorts, 'Inport') && numel(heartPorts.Inport) >= 3
+    paceInport = heartPorts.Inport(3);
 end
 if isfield(heartPorts, 'Outport') && numel(heartPorts.Outport) >= 1
     cellsOutport = heartPorts.Outport(1);
@@ -816,7 +833,7 @@ cfgIn = sprintf('%s/cfg', heartModel);
 add_block('simulink/Sources/Constant', cfgIn);
 set_param(cfgIn, 'Position', [layout.leftMargin - 100, containerPos(2) + layout.containerSize(2) / 4, ...
     layout.leftMargin - 50, containerPos(2) + layout.containerSize(2) / 4 + layout.tagWidth], ...
-    'Value', 'cfg',  'OutDataTypeStr', 'Bus: HeartCfgBus','ShowName', 'off');
+    'Value', 'HeartCfg',  'OutDataTypeStr', 'Bus: HeartCfgBus','ShowName', 'off');
 
 paceZero = sprintf('%s/PaceZero', heartModel);
 add_block('simulink/Sources/Constant', paceZero);
@@ -832,6 +849,16 @@ end
 
 if ~isempty(paceInport)
     add_line(heartModel, pacePorts.Outport(1), paceInport);
+end
+
+leadsIn = sprintf('%s/Leads', heartModel);
+add_block('simulink/Sources/Constant', leadsIn);
+set_param(leadsIn, 'Position', [layout.leftMargin - 100, containerPos(2) + layout.containerSize(2) / 2, ...
+    layout.leftMargin - 50, containerPos(2) + layout.containerSize(2) / 2 + layout.tagWidth], ...
+    'Value', 'Leads', 'OutDataTypeStr', 'Bus: Lead_group', 'ShowName', 'off');
+if ~isempty(leadsInport)
+    leadsPorts = get_param(leadsIn, 'PortHandles');
+    add_line(heartModel, leadsPorts.Outport(1), leadsInport);
 end
 end
 
@@ -852,95 +879,42 @@ add_line(heartModel, sourceOutportHandle, termPorts.Inport(1));
 end
 
 function addModuleBlock(moduleSource, destinationBlock)
-moduleSource = string(moduleSource);
-modelName = modelNameFromSource(moduleSource);
+moduleSourceStr = string(moduleSource);
 
-if strlength(modelName) == 0 && contains(moduleSource, "/")
-    add_block(char(moduleSource), destinationBlock);
+% Fast-path for standard library blocks or subsystems (e.g., 'simulink/Sources/In1')
+if contains(moduleSourceStr, "/")
+    add_block(char(moduleSourceStr), destinationBlock);
     return;
 end
 
+% Process as a Model Reference
+modelName = modelNameFromSource(moduleSourceStr);
 if strlength(modelName) == 0
-    modelName = stripFileExtension(moduleSource);
+    modelName = stripFileExtension(moduleSourceStr);
 end
 
- refreshModelReferenceInterface(modelName);
+% Add the model reference block directly.
+% (We trust the interface was updated during the initial load phase).
+add_block('built-in/ModelReference', destinationBlock, ...
+    'ModelName', char(modelName));
+end
 
-try
-    add_block('built-in/ModelReference', destinationBlock, ...
-        'ModelName', char(modelName));
-catch err
-    if strcmp(err.identifier, 'Simulink:Commands:MalformedPortInterface') || ...
-            contains(lower(err.message), 'port interface information is malformed')
-        try
-            Simulink.BlockDiagram.updateModelReferenceInterface(char(modelName));
-            add_block('built-in/ModelReference', destinationBlock, ...
-                'ModelName', char(modelName));
-        catch
-            addSubsystemFromModel(destinationBlock, modelName);
-        end
+function loadModuleSources(moduleRefs)
+sources = unique([string({moduleRefs.module})]);
+
+for k = 1:numel(sources)
+    % Only process Model References (skip library paths with '/')
+    if ~contains(sources(k), "/")
+        modelName = stripFileExtension(sources(k));
+
+        % Load the model and update its interface ONCE
+        load_system(char(modelName));
+        Simulink.BlockDiagram.refreshBlocks(char(modelName));
     else
-        rethrow(err);
+        % Just load the library
+        load_system(char(extractBefore(sources(k), "/")));
     end
 end
-end
-
-function refreshModelReferenceInterface(modelName)
-if strlength(modelName) == 0
-    return;
-end
-
-try
-    load_system(char(modelName));
-catch
-    % If the model cannot be loaded here, let add_block throw a clearer error later.
-    return;
-end
-
-try
-    Simulink.BlockDiagram.updateModelReferenceInterface(char(modelName));
-catch
-    % Best effort only; addModuleBlock already has fallback paths.
-end
-end
-
-function addSubsystemFromModel(destinationBlock, modelName)
-add_block('simulink/Ports & Subsystems/Subsystem', destinationBlock);
-
-defaultIn = sprintf('%s/In1', destinationBlock);
-defaultOut = sprintf('%s/Out1', destinationBlock);
-
-if exist_block(destinationBlock, 'In1') && exist_block(destinationBlock, 'Out1')
-    delete_line(destinationBlock, 'In1/1', 'Out1/1');
-    delete_block(defaultIn);
-    delete_block(defaultOut);
-end
-
-Simulink.BlockDiagram.copyContentsToSubSystem(char(modelName), destinationBlock);
-clearCopiedBusElementTypes(destinationBlock);
-end
-
-function clearCopiedBusElementTypes(destinationBlock)
-candidateBlocks = find_system(destinationBlock, 'LookUnderMasks', 'all', ...
-    'FollowLinks', 'on', 'Regexp', 'on', 'Name', '^In Bus Element\d*$|^Out Bus Element\d*$');
-
-for idx = 1:numel(candidateBlocks)
-    clearBusElementTypeAttribute(candidateBlocks{idx});
-end
-end
-
-function clearBusElementTypeAttribute(blockPath)
-try
-    currentType = string(get_param(blockPath, 'OutDataTypeStr'));
-    if startsWith(currentType, "Bus:")
-        set_param(blockPath, 'OutDataTypeStr', 'Inherit: auto');
-    end
-catch
-end
-end
-
-function tf = exist_block(parentBlock, childBlock)
-tf = ~isempty(find_system(parentBlock, 'SearchDepth', 1, 'Name', childBlock));
 end
 
 function modelName = modelNameFromSource(moduleSource)
@@ -965,59 +939,103 @@ if contains(moduleSource, "/")
 end
 end
 
-function applyBlockConfiguration(blockPath, parameterName, parameterValue)
-blockData = struct('parameterName', parameterName, 'parameterValue', parameterValue);
-set_param(blockPath, 'UserData', blockData, 'UserDataPersistent', 'on');
+function applyParameterBindingsToBlock(blockPath, bindings)
+if isempty(bindings)
+    return;
+end
 
-parameterValueText = encodeParameterValue(parameterValue);
+% 1. Get block metadata ONCE
+blockType = get_param(blockPath, 'BlockType');
+isModelRef = strcmp(blockType, 'ModelReference') || strcmp(blockType, 'Model');
 
-blockType = string(get_param(blockPath, 'BlockType'));
-if any(blockType == ["ModelReference", "Model"])
-    instanceParameters = get_param(blockPath, 'InstanceParameters');
-    if isstruct(instanceParameters)
-        parameterIndex = find(strcmp({instanceParameters.Name}, parameterName), 1, 'first');
-        if ~isempty(parameterIndex)
-            instanceParameters(parameterIndex).Value = parameterValueText;
-            set_param(blockPath, 'InstanceParameters', instanceParameters);
-            return;
-        end
+% Prepare memory structures for batch updates
+nvPairs = {}; % For batching standard Dialog parameters
+userDataArray = struct('parameterName', cell(1, numel(bindings)), 'parameterValue', cell(1, numel(bindings)));
+
+% Fetch Instance and Dialog parameters exactly ONCE
+instParams = [];
+instNames = {};
+if isModelRef
+    instParams = get_param(blockPath, 'InstanceParameters');
+    if isstruct(instParams)
+        instNames = {instParams.Name}; % Cache names for blazing fast lookups
     end
 end
 
-dialogParameters = get_param(blockPath, 'DialogParameters');
-if isstruct(dialogParameters) && isfield(dialogParameters, parameterName)
-    set_param(blockPath, parameterName, parameterValueText);
-end
-end
+dlgParams = get_param(blockPath, 'DialogParameters');
+isDlgStruct = isstruct(dlgParams);
 
-function applyParameterBindingsToBlock(blockPath, bindings)
+instParamsChanged = false;
+
+% 2. Process all bindings in memory (No Simulink API calls here!)
 for idx = 1:numel(bindings)
-    applyBlockConfiguration(blockPath, bindings(idx).parameterName, bindings(idx).variableName);
-end
+    pName = bindings(idx).parameterName;
+    pVal  = bindings(idx).variableName; % Note: original mapped variableName to parameterValue
+
+    pValText = encodeParameterValue(pVal);
+
+    % Fix the UserData bug: save ALL bindings in an array
+    userDataArray(idx).parameterName = pName;
+    userDataArray(idx).parameterValue = pVal;
+
+    appliedToInstance = false;
+
+    % Check and update Instance Parameters in memory
+    if ~isempty(instNames)
+        matchIdx = find(strcmp(instNames, pName), 1, 'first');
+        if ~isempty(matchIdx)
+            instParams(matchIdx).Value = pValText;
+            instParamsChanged = true;
+            appliedToInstance = true;
+        end
+    end
+
+    % If not an Instance Parameter, prep it for a batched set_param
+    if ~appliedToInstance && isDlgStruct && isfield(dlgParams, pName)
+        nvPairs{end+1} = pName;
+        nvPairs{end+1} = pValText;
+    end
 end
 
+% 3. Push updates to Simulink in the minimum possible API calls
 
-function addGotoBlock(heartSubsystem, blockName, gotoTag, referencePos, portCount, portIndex, placeRight)
+% Write InstanceParameters back (1 call instead of N)
+if instParamsChanged
+    set_param(blockPath, 'InstanceParameters', instParams);
+end
+
+% Write ALL standard DialogParameters simultaneously (1 call instead of N)
+if ~isempty(nvPairs)
+    set_param(blockPath, nvPairs{:});
+end
+
+% Write the fixed, complete UserData array (1 call instead of N)
+set_param(blockPath, 'UserData', userDataArray, 'UserDataPersistent', 'on');
+end
+
+function pos = addGotoBlock(heartSubsystem, blockName, gotoTag, referencePos, portCount, portIndex, placeRight)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
-add_block('simulink/Signal Routing/Goto', blockPath);
 
+% 1. Calculate position BEFORE creating the block
 tagLength = computeTagLength(gotoTag);
 [x0, y0] = tagPosition(referencePos, portCount, portIndex, placeRight, tagLength);
-% y0 = y0 + tagVerticalNudge(gotoTag);
-set_param(blockPath, 'Position', [x0, y0, x0 + tagLength, y0 + 20], ...
-    'GotoTag', gotoTag, 'ShowName', 'off');
+pos = [x0, y0, x0 + tagLength, y0 + 20];
+
+% 2. Create the block and set ALL properties in one API call
+add_block('simulink/Signal Routing/Goto', blockPath, ...
+    'Position', pos, ...
+    'GotoTag', gotoTag, ...
+    'ShowName', 'off');
 end
 
 function addFromBlock(heartSubsystem, blockName, gotoTag, referencePos, portCount, portIndex, inputPort, varargin)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
-add_block('simulink/Signal Routing/From', blockPath);
-
+% 1. Calculate layout and alignment BEFORE touching the Simulink API
 tagLength = computeTagLength(gotoTag);
 [x0, y0] = tagPosition(referencePos, portCount, portIndex, false, tagLength);
 if inputPort > 1
     y0 = y0 + (portIndex - 1) * (referencePos(4) - referencePos(2)) / portCount;
 end
-
 targetBlockName = "";
 targetPortIndex = inputPort;
 if ~isempty(varargin)
@@ -1027,23 +1045,18 @@ if numel(varargin) >= 2
     targetPortIndex = varargin{2};
 end
 y0 = alignToBlockInportY(heartSubsystem, targetBlockName, targetPortIndex, y0, 20);
-
-set_param(blockPath, 'Position', [x0, y0, x0 + tagLength, y0 + 20], ...
-    'GotoTag', gotoTag, 'ShowName', 'off');
+finalPos = [x0, y0, x0 + tagLength, y0 + 20];
+% 2. Create the block and set ALL properties in one step
+add_block('simulink/Signal Routing/From', blockPath, ...
+    'Position', finalPos, ...
+    'GotoTag', gotoTag, ...
+    'ShowName', 'off');
 end
 
-function addConfigBusElementBlock(heartSubsystem, blockName, elementName, referencePos, portCount, portIndex, varargin)
+function templateBlockPath = addConfigBusElementBlock(heartSubsystem, blockName, elementName, referencePos, portCount, portIndex, templateBlockPath, varargin)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
-existingCfgBlocks = find_system(heartSubsystem, 'SearchDepth', 1, 'Regexp', 'on', 'Name', '^cfg_');
 
-if isempty(existingCfgBlocks)
-    add_block('simulink/Ports & Subsystems/In Bus Element', blockPath, ...
-        'PortName', 'cfg', 'Element', char(elementName));
-else
-    add_block(existingCfgBlocks{1}, blockPath, 'MakeNameUnique', 'off');
-    set_param(blockPath, 'Element', char(elementName));
-end
-
+% (Layout math remains the exact same as above)
 tagLength = computeTagLength(sprintf('cfg.%s', char(elementName)));
 [x0, y0] = tagPosition(referencePos, portCount, portIndex, false, tagLength);
 
@@ -1055,11 +1068,33 @@ end
 if numel(varargin) >= 2
     targetPortIndex = varargin{2};
 end
-y0 = alignToBlockInportY(heartSubsystem, targetBlockName, targetPortIndex, y0, 20);
-%y0 = y0 + busElementVerticalNudge('cfg', elementName);
 
-clearBusElementTypeAttribute(blockPath);
-set_param(blockPath, 'Position', [x0, y0, x0 + tagLength, y0 + 20], 'ShowName', 'off');
+y0 = alignToBlockInportY(heartSubsystem, targetBlockName, targetPortIndex, y0, 20);
+finalPos = [x0, y0, x0 + tagLength, y0 + 20];
+
+% --- THE FIX ---
+    % If the template is empty (e.g., at the start of addPathAssembly), 
+    % check the model ONCE to see if addNodeAssembly already created one.
+    if strlength(templateBlockPath) == 0
+        existingCfgBlocks = find_system(heartSubsystem, 'SearchDepth', 1, 'Regexp', 'on', 'Name', '^cfg_');
+        if ~isempty(existingCfgBlocks)
+            templateBlockPath = string(existingCfgBlocks{1});
+        end
+    end
+% NO MORE FIND_SYSTEM! Check the cached string instead.
+if strlength(templateBlockPath) == 0
+    add_block('simulink/Ports & Subsystems/In Bus Element', blockPath, ...
+        'PortName', 'cfg', 'Element', char(elementName), ...
+        'Position', finalPos, 'ShowName', 'off', ...
+        'OutDataTypeStr', 'Inherit: auto');
+    templateBlockPath = string(blockPath); % Save the first one we make
+else
+    add_block(char(templateBlockPath), blockPath, ...
+        'MakeNameUnique', 'off', 'Element', char(elementName), ...
+        'Position', finalPos, 'ShowName', 'off', ...
+        'OutDataTypeStr', 'Inherit: auto');
+end
+
 end
 
 function [x0, y0] = tagPosition(referencePos, portCount, portIndex, placeRight, tagLength)
@@ -1082,21 +1117,24 @@ end
 
 function y0 = alignToBlockInportY(heartSubsystem, blockName, portIndex, yFallback, blockHeight)
 y0 = yFallback;
-if strlength(blockName) == 0
+% 1. Fast exit for empty block names (using native string comparison)
+if isempty(blockName) || blockName == ""
     return;
 end
-
-targetBlockPath = sprintf('%s/%s', heartSubsystem, char(blockName));
+targetBlockPath = sprintf('%s/%s', heartSubsystem, blockName);
 try
+    % 2. Get port handles (Simulink always includes the 'Inport' field)
     targetPorts = get_param(targetBlockPath, 'PortHandles');
-    if isfield(targetPorts, 'Inport') && numel(targetPorts.Inport) >= portIndex
-        inportPosition = get_param(targetPorts.Inport(portIndex), 'Position');
-        if isnumeric(inportPosition) && numel(inportPosition) >= 2
-            y0 = inportPosition(2) - blockHeight / 2;
-        end
+    inports = targetPorts.Inport;
+    % 3. Verify the requested port index actually exists on the block
+    if portIndex <= numel(inports)
+        % 4. Retrieve position directly (Simulink always returns [x, y])
+        inportPos = get_param(inports(portIndex), 'Position');
+        % Calculate aligned Y position
+        y0 = inportPos(2) - (blockHeight / 2);
     end
 catch
-    y0 = yFallback;
+    % Silently fall back to yFallback if the block doesn't exist yet
 end
 end
 
@@ -1211,8 +1249,6 @@ end
 function settings = getBuildSettings()
 settings = struct( ...
     'modelName', defaultHeartModelName(), ...
-    'slddHeart',"",...
-    'cfg',struct,...
     'modelPath', "models", ...
     'standalone', true, ...
     'apTargetNodes', "", ...
@@ -1329,21 +1365,7 @@ function tf = rectanglesOverlap(a, b)
 tf = a(1) < b(3) && a(3) > b(1) && a(2) < b(4) && a(4) > b(2);
 end
 
-function attachDict(heartModel, slddHeart)
-dictPath = resolveHeartDictionaryPath(slddHeart);
-closeShadowingDictionariesForTarget(slddHeart);
-[dictFolder, dictName, dictExt] = fileparts(dictPath);
-if strlength(string(dictFolder)) > 0
-    addpath(dictFolder);
-end
-dictRef = string(strcat(dictName, dictExt));
-%% Attach dictionary
-set_param(...
-    heartModel,...
-    "DataDictionary",...
-    dictRef);
-set_param(heartModel, 'EnableAccessToBaseWorkspace', 'off');
-end
+
 
 function assignParameters(mdlWks,parameterSpecs)
 %% Assign parameters
@@ -1372,52 +1394,6 @@ for i=1:numel(bindings)
 end
 end
 
-function resolvedPath = resolveHeartDictionaryPath(slddHeart)
-requested = string(slddHeart);
-if isfile(char(requested))
-   resolvedPath = char(requested);
-   return;
-end
 
-proj = currentProject;
-candidate = fullfile(proj.RootFolder, 'Data', 'sldd_system', char(requested));
-if isfile(candidate)
-   resolvedPath = candidate;
-   return;
-end
-
-error('Cannot find %s',requested);
-end
-
-function closeShadowingDictionariesForTarget(targetPath)
-if ~isfile(targetPath)
-   return;
-end
-
-[~, targetName, targetExt] = fileparts(targetPath);
-targetFileName = lower(string(strcat(targetName, targetExt)));
-targetPathNorm = lower(string(targetPath));
-
-try
-   openPaths = string(Simulink.data.dictionary.getOpenDictionaryPaths);
-catch
-   openPaths = strings(0, 1);
-end
-
-for idx = 1:numel(openPaths)
-   openPath = string(openPaths(idx));
-   [~, openName, openExt] = fileparts(char(openPath));
-   openFileName = lower(string(strcat(openName, openExt)));
-
-   if openFileName == targetFileName && lower(openPath) ~= targetPathNorm
-      try
-         openDd = Simulink.data.dictionary.open(char(openPath));
-         close(openDd);
-      catch
-         % Best-effort close; if this fails, caller behavior remains unchanged.
-      end
-   end
-end
-end
 
 

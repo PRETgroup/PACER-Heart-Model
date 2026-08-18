@@ -1,16 +1,16 @@
-function [cfg] = buildHeartConfiguration(G,slddHeart,leadGroup,leadDictName)
+function buildHeartConfiguration(G,slddHeart)
 numNodes = numnodes(G);
 numPaths = numedges(G);
 nodeNames = string(G.Nodes.Name);
 nodeTypes = upper(string(G.Nodes.Type));
-cfg=struct;% The data for model configuration
-numElements = numNodes + numPaths + 1; % +1 for Leads
+HeartCfg=struct;% The data for model configuration
+numElements = numNodes + numPaths;
 % Preallocate BusElement array
 elements(1, numElements) = Simulink.BusElement;
 idx = 1;
 %% Nodes
 for i=1:numNodes
-    cfg.(G.Nodes.Name{i})=G.Nodes.cfg{i};
+    HeartCfg.(G.Nodes.Name{i})=G.Nodes.cfg{i};
     elements(idx) = Simulink.BusElement;
     elements(idx).Name = nodeNames(i);
     switch nodeTypes(i)
@@ -33,7 +33,7 @@ for i=1:numNodes
 end
 %% Paths
 for i=1:numPaths
-    cfg.(sprintf('path_%d',i))=G.Edges.pathCfg{i};
+    HeartCfg.(sprintf('path_%d',i))=G.Edges.pathCfg{i};
     elements(idx) = Simulink.BusElement;
     elements(idx).Name = sprintf('path_%d',i);
     elements(idx).DataType = "Bus: Config_Path";
@@ -41,18 +41,12 @@ for i=1:numPaths
 end
 %% Create Heart configuration bus
 heartCfgBus = Simulink.Bus;
+heartCfgBus.Elements=elements;
 % Create dictionary
-
-%% Lead group
-cfg.Leads=leadGroup;
-elements(idx) = Simulink.BusElement;
-elements(idx).Name = "Leads";
-elements(idx).DataType = "Bus: Lead_group";
-heartCfgBus.Elements = elements;
-buildHeartDictionary(slddHeart, heartCfgBus,leadDictName);
+buildHeartDictionary(slddHeart, heartCfgBus, HeartCfg);
 end
 
-function buildHeartDictionary(dictName,heartCfgBus,leadDictName)
+function buildHeartDictionary(dictName,heartCfgBus,HeartCfg)
 proj=currentProject;
 root=proj.RootFolder;
 dictPath=fullfile(...
@@ -60,7 +54,6 @@ dictPath=fullfile(...
     "Data",...
     "sldd_system",...
     dictName);
-closeConflictingOpenDictionaries(dictPath, dictName);
 %% Create dictionary
 if isfile(dictPath)
     warning('%s exists.',dictPath)
@@ -80,15 +73,13 @@ references=[
     "M_dd.sldd"
     "NM_dd.sldd"
     "Path_dd.sldd"
-    leadDictName
-    "SharedConfigData.sldd"
     "Sensing_dd.sldd"
     "Wavefront_type.sldd"
     "PM_DDD_dd.sldd"
 ];
 
 existing = string(dd.DataSources);
-
+% Clean existing references
 for datai = 1:numel(existing)
     removeDataSource(dd,existing(datai))
 end
@@ -108,6 +99,13 @@ catch
     setValue(entry, heartCfgBus);      % Replace the existing value    
 end
 
+try
+    addEntry(design, 'HeartCfg', HeartCfg);
+catch
+    warning('HeartCfg already exists')
+    entry = getEntry(design, 'HeartCfg');
+    setValue(entry, HeartCfg);      % Replace the existing value    
+end
 saveChanges(dd);
 close(dd);
 end
