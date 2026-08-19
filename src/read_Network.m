@@ -141,7 +141,7 @@ edgeNum = numedges(G);
 Nodes_cfg=cell(nodeNum,1);
 Paths_cfg=cell(edgeNum,1);
 Dipoles = cell(edgeNum,1);
-
+nodeCoordinates = [G.Nodes.x, G.Nodes.y, G.Nodes.z];
 node_type = upper(string(nodes.Type));
 
 requiredNCfgFields = unique([setdiff(N_cfgFields, ["VT", "VR"]), "VT_n", "VR_n"]);
@@ -226,7 +226,6 @@ for k = 1:pathNum
     edgeAssigned(edgeIdx) = true;
 
     Paths_cfg{edgeIdx}=table2struct(paths(k, Path_cfgFields));
-
     iNode = startIdx(k);
     jNode = endIdx(k);
     Dipoles{edgeIdx} = struct( ...
@@ -237,6 +236,9 @@ for k = 1:pathNum
         'yj', G.Nodes.y(jNode), ...
         'zj', G.Nodes.z(jNode), ...
         'C',  paths.C(k));
+    % add path length
+    pathVector = [ G.Nodes.x(iNode),G.Nodes.y(iNode),G.Nodes.z(iNode)] - [G.Nodes.x(jNode),G.Nodes.y(jNode),G.Nodes.z(jNode)];
+    Paths_cfg{edgeIdx}.l=sqrt(sum(pathVector .^ 2));
 
 end
 

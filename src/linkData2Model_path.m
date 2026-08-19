@@ -24,6 +24,7 @@ Config_MATLABStruct_P.Dji = 1;
 Config_MATLABStruct_P.aji = 0.3;
 Config_MATLABStruct_P.bji = 62.89;
 Config_MATLABStruct_P.cji = 10.99;
+Config_MATLABStruct_P.l = 10;
 % 
 Config_MATLABStruct_N.BCL = 0.814;
 Config_MATLABStruct_N.SD = 0.002;
@@ -82,22 +83,6 @@ set_param(sprintf('%s/cfgM',modelName),...
 mdlWks=get_param(...
     modelName,...
     "ModelWorkspace");
-assignin(...
-    mdlWks,...
-    "cfg_P",...
-    Config_MATLABStruct_P);
-assignin(...
-    mdlWks,...
-    "cfg_N",...
-    Config_MATLABStruct_N);
-assignin(...
-    mdlWks,...
-    "cfg_M",...
-    Config_MATLABStruct_M);
-assignin(...
-    mdlWks,...
-    "l",...
-    1);
 
 %% Attach dictionary
 dictPath = './Data/sldd_system/pathExample.sldd';
@@ -116,15 +101,48 @@ references=[
 
 existing = string(dd.DataSources);
 
+for datai = 1:numel(existing)
+    removeDataSource(dd,existing(datai))
+end
+
 for i = 1:numel(references)
     refName = references(i);
-    if ~any(existing == refName)
-        addDataSource(dd, refName);
-    end
+    addDataSource(dd, refName);
 end
+
+%% Store the parameters
+design=getSection(dd,"Design Data");
+try
+    addEntry(design, 'cfg_P', Config_MATLABStruct_P);
+catch
+    warning('cfg_P already exists')
+    entry = getEntry(design, 'cfg_P');
+    setValue(entry, Config_MATLABStruct_P);      % Replace the existing value
+end
+
+try
+    addEntry(design, 'cfg_N', Config_MATLABStruct_N);
+catch
+    warning('cfg_N already exists')
+    entry = getEntry(design, 'cfg_N');
+    setValue(entry, Config_MATLABStruct_N);      % Replace the existing value
+end
+
+try
+    addEntry(design, 'cfg_M', Config_MATLABStruct_M);
+catch
+    warning('cfg_M already exists')
+    entry = getEntry(design, 'cfg_M');
+    setValue(entry, Config_MATLABStruct_M);      % Replace the existing value
+end
+
+saveChanges(dd);
+close(dd);
+
 set_param(modelName, 'EnableAccessToBaseWorkspace', 'off');
 set_param(...
     modelName,...
     "DataDictionary",...
    'pathExample.sldd');
+
 close_system(modelName, 1); 
