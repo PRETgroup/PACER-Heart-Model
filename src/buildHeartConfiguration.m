@@ -82,7 +82,9 @@ references=[
     "NM_dd.sldd"
     "Path_dd.sldd"
     "Sensing_dd.sldd"
-    "Electrode_dd.sldd"
+    "Dipole_cfg_type.sldd"
+    "Wavefront_type.sldd"
+    "Path2Probe_type.sldd"
     "PM_DDD_dd.sldd"
 ];
 
