@@ -4,7 +4,7 @@ numPaths = numedges(G);
 nodeNames = string(G.Nodes.Name);
 nodeTypes = upper(string(G.Nodes.Type));
 HeartCfg=struct;% The data for model configuration
-numElements = numNodes + numPaths;
+numElements = numNodes + numPaths*2;
 % Preallocate BusElement array
 elements(1, numElements) = Simulink.BusElement;
 idx = 1;
@@ -37,6 +37,14 @@ for i=1:numPaths
     elements(idx) = Simulink.BusElement;
     elements(idx).Name = sprintf('path_%d',i);
     elements(idx).DataType = "Bus: Config_Path";
+    idx = idx + 1;
+end
+%% Dipoles
+for i=1:numPaths
+    HeartCfg.(sprintf('dipole_%d',i))=G.Edges.dipole{i};
+    elements(idx) = Simulink.BusElement;
+    elements(idx).Name = sprintf('dipole_%d',i);
+    elements(idx).DataType = "Bus: Config_Dipole";
     idx = idx + 1;
 end
 %% Create Heart configuration bus
@@ -74,7 +82,7 @@ references=[
     "NM_dd.sldd"
     "Path_dd.sldd"
     "Sensing_dd.sldd"
-    "Wavefront_type.sldd"
+    "Electrode_dd.sldd"
     "PM_DDD_dd.sldd"
 ];
 

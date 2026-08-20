@@ -91,10 +91,8 @@ nodeCount = numnodes(G);
 pathCount = numedges(G);
 nodeNames = string(G.Nodes.Name);
 nodeTypes = upper(string(G.Nodes.Type));
-nodeCoordinates = [G.Nodes.x, G.Nodes.y, G.Nodes.z];
 validatePacingTargetNodes(settings, nodeNames);
 [startIdx, endIdx] = findedge(G);
-dipoles = getDipoles(G, startIdx, endIdx);
 useParallel = canUseParallel(nodeCount, pathCount);
 nodeSpecs = cell(nodeCount, 1);
 pathSpecs = cell(pathCount, 1);
@@ -106,10 +104,9 @@ if useParallel
     end
     parfor pathIdx = 1:pathCount
         pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
-            endIdx(pathIdx), nodeNames, nodeCoordinates,  ...
-            moduleRefs, layout);
+            endIdx(pathIdx), nodeNames, moduleRefs, layout);
         electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
-            dipoles{pathIdx}, moduleRefs, layout);
+           moduleRefs, layout);
     end
 else
     for nodeIdx = 1:nodeCount
@@ -118,18 +115,14 @@ else
     end
     for pathIdx = 1:pathCount
         pathSpecs{pathIdx} = makePathSpec(pathIdx, startIdx(pathIdx), ...
-            endIdx(pathIdx), nodeNames, nodeCoordinates,  ...
-            moduleRefs, layout);
+            endIdx(pathIdx), nodeNames, moduleRefs, layout);
         electrodeSpecs{pathIdx} = makeElectrodeSpec(pathIdx, pathSpecs{pathIdx}, ...
-            dipoles{pathIdx}, moduleRefs, layout);
+           moduleRefs, layout);
     end
 end
 
 jointTags = buildJointTags(pathSpecs, nodeCount);
-parameterSpecs=[
-    pathSpecs
-    electrodeSpecs
-    ];
+
 %% assemble the models
 addNodeAssembly(heartSubsystem, nodeSpecs);
 addPathAssembly(heartSubsystem, pathSpecs);
@@ -137,9 +130,6 @@ addElectrodeAssembly(heartSubsystem, electrodeSpecs);
 addJointAssembly(heartSubsystem, nodeNames, jointTags, layout, settings);
 addControlInputs(heartSubsystem, layout);
 addOutputs(heartSubsystem, nodeSpecs, electrodeSpecs, nodeCount, pathCount, layout);
-%%save parameters to the model workspace;
-mdlWks=get_param(heartModel,"ModelWorkspace");
-assignParameters(mdlWks,parameterSpecs)
 
 if settings.standalone
     addStandaloneIo(heartModel, heartSubsystem, layout);
@@ -190,6 +180,13 @@ if ~isempty(missingEdgeVars)
     error('buildHeart:MissingEdgeVariables', ...
         'G.Edges is missing required variables: %s', strjoin(missingEdgeVars, ', '));
 end
+
+requiredEdgeVars = "dipole";
+missingEdgeVars = setdiff(requiredEdgeVars, string(G.Edges.Properties.VariableNames));
+if ~isempty(missingEdgeVars)
+    error('buildHeart:MissingEdgeVariables', ...
+        'G.Edges is missing required variables: %s', strjoin(missingEdgeVars, ', '));
+end
 end
 
 function validatePacingTargetNodes(settings, nodeNames)
@@ -218,28 +215,6 @@ for idx = 1:numel(moduleRefs)
     moduleRefs(idx).module = string(moduleRefs(idx).module);
     moduleRefs(idx).type = lower(string(moduleRefs(idx).type));
     moduleRefs(idx).mtype = upper(string(moduleRefs(idx).mtype));
-end
-end
-
-function dipoles = getDipoles(G, startIdx, endIdx)
-edgeVars = string(G.Edges.Properties.VariableNames);
-pathCount = numedges(G);
-dipoles = cell(pathCount, 1);
-
-if ismember("dipole", edgeVars)
-    dipoles = G.Edges.dipole;
-    return
-end
-
-for pathIdx = 1:pathCount
-    dipoles{pathIdx} = struct( ...
-        'xi', G.Nodes.x(startIdx(pathIdx)), ...
-        'yi', G.Nodes.y(startIdx(pathIdx)), ...
-        'zi', G.Nodes.z(startIdx(pathIdx)), ...
-        'xj', G.Nodes.x(endIdx(pathIdx)), ...
-        'yj', G.Nodes.y(endIdx(pathIdx)), ...
-        'zj', G.Nodes.z(endIdx(pathIdx)), ...
-        'C', G.Edges.Weight(pathIdx));
 end
 end
 
@@ -292,7 +267,7 @@ spec.cfgBusBlockName = sprintf('cfg_%s', spec.name);
 spec.cfgBusElement = spec.name;
 end
 
-function spec = makePathSpec(pathIdx, startNodeIdx, endNodeIdx, nodeNames, nodeCoordinates, moduleRefs, layout)
+function spec = makePathSpec(pathIdx, startNodeIdx, endNodeIdx, nodeNames, moduleRefs, layout)
 spec = struct;
 spec.index = pathIdx;
 spec.startNodeIdx = startNodeIdx;
@@ -304,9 +279,6 @@ spec.blockName = makeValidBlockName(spec.name);
 spec.module = resolveModule(moduleRefs, "path", "straightLine");
 spec.position = blockPosition(layout.leftMargin + layout.pathColumnOffset, ...
     layout.topMargin + (pathIdx - 1) * layout.pathSpacing, layout.pathSize);
-pathVector = nodeCoordinates(startNodeIdx, :) - nodeCoordinates(endNodeIdx, :);
-pathLength = sqrt(sum(pathVector .^ 2));
-spec.pathLength = pathLength;
 spec.forwardTag = sprintf('%s_J_%s_%d', spec.startNodeName, spec.endNodeName,pathIdx);
 spec.reverseTag = sprintf('%s_J_%s_%d', spec.endNodeName,spec.startNodeName,pathIdx);
 spec.probeTag = sprintf('P_%d', pathIdx);
@@ -316,10 +288,9 @@ spec.cellITagName_block = sprintf('c_%s_%d', spec.startNodeName,pathIdx);
 spec.cellJTagName_block = sprintf('c_%s_%d',spec.endNodeName,pathIdx);
 spec.cfgBusBlockName = sprintf('cfgPath_%d_%d', startNodeIdx, endNodeIdx);
 spec.cfgBusElement = sprintf('path_%d', pathIdx);
-spec.parameterBindings = pathParameterBindings(pathIdx, pathLength);
 end
 
-function spec = makeElectrodeSpec(pathIdx, pathSpec, dipole, moduleRefs, layout)
+function spec = makeElectrodeSpec(pathIdx, pathSpec,moduleRefs, layout)
 spec = struct;
 spec.index = pathIdx;
 spec.name = sprintf('%s_probe', pathSpec.name);
@@ -330,36 +301,10 @@ spec.position = blockPosition(layout.leftMargin + layout.electrodeColumnOffset, 
 spec.pathTag = pathSpec.probeTag;
 spec.egmTag = sprintf('EGM_%d', pathIdx);
 spec.waveTag = sprintf('w_%d', pathIdx);
-spec.dipole = dipole;
-spec.parameterBindings = electrodeParameterBindings(pathIdx, dipole);
+spec.cfgBusBlockName = sprintf('cfgDipole_%d', pathIdx);
+spec.cfgBusElement = sprintf('dipole_%d', pathIdx);
 end
 
-function bindings = pathParameterBindings(pathIdx, pathLength)
-bindings(1)= makeParameterBinding('l',sprintf('l_%d',pathIdx),pathLength);
-end
-
-function bindings = electrodeParameterBindings(pathIdx, dipole)
-
-fn = fieldnames(dipole);
-n = numel(fn);
-
-bindings(n) = makeParameterBinding("", "", []);
-
-for i = 1:n
-    bindings(i) = makeParameterBinding( ...
-        fn{i}, ...
-        sprintf('%s_%d', fn{i}, pathIdx), ...
-        dipole.(fn{i}));
-end
-
-end
-
-function binding = makeParameterBinding(parameterName, variableName, value)
-binding = struct( ...
-    'parameterName', char(parameterName), ...
-    'variableName', char(variableName), ...
-    'value', value);
-end
 
 function jointTags = buildJointTags(pathSpecs, nodeCount)
 jointTags = cell(nodeCount, 1);
@@ -446,7 +391,6 @@ for idx = 1:numel(pathSpecs)
     % 1. Add the main module block
     addModuleBlock(spec.module, blockPath);
     set_param(blockPath, 'Position', pos);
-    applyParameterBindingsToBlock(blockPath, spec.parameterBindings);
 
     % 2. Add Config Bus Element using the FAST template method
     % (Make sure addConfigBusElementBlock takes and returns cfgTemplate!)
@@ -477,7 +421,8 @@ end
 function addElectrodeAssembly(heartSubsystem, electrodeSpecs)
 % Cache constant tags outside the loop
 leadsTag = 'Leads';
-
+% Initialize the template tracker to bypass find_system inside the loop
+cfgTemplate = "";
 for idx = 1:numel(electrodeSpecs)
     spec = electrodeSpecs{idx};
 
@@ -491,18 +436,24 @@ for idx = 1:numel(electrodeSpecs)
     % 2. Create and configure the main module
     addModuleBlock(spec.module, blockPath);
     set_param(blockPath, 'Position', pos);
-    applyParameterBindingsToBlock(blockPath, spec.parameterBindings);
+    
+    % 2. Add Config Bus Element using the FAST template method
+    % (Make sure addConfigBusElementBlock takes and returns cfgTemplate!)
+    cfgTemplate = addConfigBusElementBlock(heartSubsystem, ...
+        spec.cfgBusBlockName, spec.cfgBusElement, pos, 3, 1, ...
+        cfgTemplate, blockName, 1);
+    addLineSafe(heartSubsystem, sprintf('%s/1', spec.cfgBusBlockName), sprintf('%s/1', blockName));
 
     % 3. Pre-format names to eliminate duplicate sprintf calls
     fromPathName = sprintf('FromPath_%d', idxNum);
     leadsName = sprintf('Leads_%d', idxNum);
 
     % 4. Add From blocks and route lines using cached strings
-    addFromBlock(heartSubsystem, fromPathName, spec.pathTag, pos, 2, 1, 1, blockName, 1);
-    addLineSafe(heartSubsystem, sprintf('%s/1', fromPathName), sprintf('%s/1', blockName));
+    addFromBlock(heartSubsystem, fromPathName, spec.pathTag, pos, 3, 2, 2, blockName, 2);
+    addLineSafe(heartSubsystem, sprintf('%s/1', fromPathName), sprintf('%s/2', blockName));
 
-    addFromBlock(heartSubsystem, leadsName, leadsTag, pos, 2, 2, 2, blockName, 2);
-    addLineSafe(heartSubsystem, sprintf('%s/1', leadsName), sprintf('%s/2', blockName));
+    addFromBlock(heartSubsystem, leadsName, leadsTag, pos, 3, 3, 3, blockName, 3);
+    addLineSafe(heartSubsystem, sprintf('%s/1', leadsName), sprintf('%s/3', blockName));
 end
 end
 
@@ -936,79 +887,6 @@ if contains(moduleSource, "/")
 end
 end
 
-function applyParameterBindingsToBlock(blockPath, bindings)
-if isempty(bindings)
-    return;
-end
-
-% 1. Get block metadata ONCE
-blockType = get_param(blockPath, 'BlockType');
-isModelRef = strcmp(blockType, 'ModelReference') || strcmp(blockType, 'Model');
-
-% Prepare memory structures for batch updates
-nvPairs = {}; % For batching standard Dialog parameters
-userDataArray = struct('parameterName', cell(1, numel(bindings)), 'parameterValue', cell(1, numel(bindings)));
-
-% Fetch Instance and Dialog parameters exactly ONCE
-instParams = [];
-instNames = {};
-if isModelRef
-    instParams = get_param(blockPath, 'InstanceParameters');
-    if isstruct(instParams)
-        instNames = {instParams.Name}; % Cache names for blazing fast lookups
-    end
-end
-
-dlgParams = get_param(blockPath, 'DialogParameters');
-isDlgStruct = isstruct(dlgParams);
-
-instParamsChanged = false;
-
-% 2. Process all bindings in memory (No Simulink API calls here!)
-for idx = 1:numel(bindings)
-    pName = bindings(idx).parameterName;
-    pVal  = bindings(idx).variableName; % Note: original mapped variableName to parameterValue
-
-    pValText = encodeParameterValue(pVal);
-
-    % Fix the UserData bug: save ALL bindings in an array
-    userDataArray(idx).parameterName = pName;
-    userDataArray(idx).parameterValue = pVal;
-
-    appliedToInstance = false;
-
-    % Check and update Instance Parameters in memory
-    if ~isempty(instNames)
-        matchIdx = find(strcmp(instNames, pName), 1, 'first');
-        if ~isempty(matchIdx)
-            instParams(matchIdx).Value = pValText;
-            instParamsChanged = true;
-            appliedToInstance = true;
-        end
-    end
-
-    % If not an Instance Parameter, prep it for a batched set_param
-    if ~appliedToInstance && isDlgStruct && isfield(dlgParams, pName)
-        nvPairs{end+1} = pName;
-        nvPairs{end+1} = pValText;
-    end
-end
-
-% 3. Push updates to Simulink in the minimum possible API calls
-
-% Write InstanceParameters back (1 call instead of N)
-if instParamsChanged
-    set_param(blockPath, 'InstanceParameters', instParams);
-end
-
-% Write ALL standard DialogParameters simultaneously (1 call instead of N)
-if ~isempty(nvPairs)
-    set_param(blockPath, nvPairs{:});
-end
-
-% Write the fixed, complete UserData array (1 call instead of N)
-set_param(blockPath, 'UserData', userDataArray, 'UserDataPersistent', 'on');
-end
 
 function pos = addGotoBlock(heartSubsystem, blockName, gotoTag, referencePos, portCount, portIndex, placeRight)
 blockPath = sprintf('%s/%s', heartSubsystem, blockName);
@@ -1165,15 +1043,6 @@ end
 moduleSource = moduleRefs(find(match, 1, 'first')).module;
 end
 
-function valueText = encodeParameterValue(value)
-if ischar(value)
-    valueText = value;
-elseif isstring(value) && isscalar(value)
-    valueText = char(value);
-else
-    valueText = serializeToExpression(value);
-end
-end
 
 function expr = serializeToExpression(value)
 if isnumeric(value)
@@ -1366,34 +1235,6 @@ function tf = rectanglesOverlap(a, b)
 tf = a(1) < b(3) && a(3) > b(1) && a(2) < b(4) && a(4) > b(2);
 end
 
-
-
-function assignParameters(mdlWks,parameterSpecs)
-%% Assign parameters
-for i=1:numel(parameterSpecs)
-    assignParameterBindings(...
-        mdlWks,...
-        parameterSpecs{i}.parameterBindings);
-end
-
-end
-function assignParameterBindings(mdlWks,bindings)
-
-for i=1:numel(bindings)
-    name=bindings(i).variableName;
-    if ~isvarname(name)
-        error(...
-            "Invalid variable name %s",...
-            name);
-    end
-
-    assignin(...
-        mdlWks,...
-        name,...
-        bindings(i).value);
-
-end
-end
 
 
 
