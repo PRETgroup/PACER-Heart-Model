@@ -16,6 +16,8 @@ PACER/ HeartModelPub provides a computational heart model for simulating cardiac
 > [!IMPORTANT]
 > The `master` branch is currently under active restructuring. Please use the `legacy` branch until the migration is complete.
 
+> [!WARNING]
+> ⚠️ Some existing links in the `master` branch may be broken or temporarily unavailable due to the ongoing restructuring. Links will be updated as the migration progresses.
 
 HeartModelPub includes:
 
@@ -113,7 +115,7 @@ The heart is represented as an abstracted network of nodes (regional tissue clus
 The heart model is organized into libraries, models, and scripts. Each component is designed for specific role.  
 - The [Lib ](./Lib/) folder contains the core component libraries, including cell models (pacemaker, myocyte, and subsidiary pacemaker cells), conduction paths, EGM sensing modules, and pacemaker devices, with separate versions for millisecond- and second-based simulations. 
 - The [models ](./models/) provides pre-built examples, ranging from single-cell pacemaker models to full heart simulations, allowing users to quickly run simulations or test specific scenarios. 
-- For more detailed or high-resolution variants, the [models_refine ](./models_refine/) contains complex heart models with increased numbers of nodes and paths. 
+- For more detailed or high-resolution variants, the [models_refine ](./models_refine/)(⚠️) contains complex heart models with increased numbers of nodes and paths. 
 - The [src ](./src/) hosts all utility scripts, including automatic model builders, configuration processors, GUI tools, plotting functions, and parameter generators, enabling users to customize and automate simulations. 
 
 #### Model Libraries
@@ -291,7 +293,7 @@ Before running any simulations, add all library files to the MATLAB® search pat
 ```
 ### Run model simulations  
 
-All the running examples are under the directory [models](./models/) or [models_refine](./models_refine/), firstly go to the directory by clicking the folder or running the following in the Matlab command window:     
+All the running examples are under the directory [models](./models/) or [models_refine](./models_refine/)(⚠️), firstly go to the directory by clicking the folder or running the following in the Matlab command window:     
 ```matlab
 >> cd models
 ```
@@ -300,9 +302,9 @@ All the running examples are under the directory [models](./models/) or [models_
 Pacemaker cells can initiate action potentials without external stimulation.
 
  In the folder, there are three pacemaker cell models: 
- <BR/>(1) SA node model - [`SAcell.slx`](./models/SAcell.slx),
- <BR/>(2) AV node model - [`CNcell.slx`](./models/CNcell.slx), and 
- <BR/> (3) His-Purkinje fibre cell model - [`HPScellV.slx`](./models/HPScell.slx).
+ <BR/>(1) SA node model - [`SAcell.slx`](./models/SAcell.slx)(⚠️),
+ <BR/>(2) AV node model - [`CNcell.slx`](./models/CNcell.slx)(⚠️), and 
+ <BR/> (3) His-Purkinje fibre cell model - [`HPScellV.slx`](./models/HPScell.slx)(⚠️).
 
  To simulate the models: <BR/> 1.Open a cell model and click "Run" button in Simulink or run the simulation using the Matlab commands:
 
@@ -325,13 +327,13 @@ If a pacemaker cell is depolarized at a higher frequency than its intrinsic rate
 </p> 
 
 Here an external stimuli is applied to a pacemaker cell to demonstrate this effect.  
-The model The model [`AV.slx`](./models/AV.slx) is preconfigured with a pulse input, and the script [`simAV_Trace.m`](./models/simAV_Trace.m) is provided to run the simulation.
+The model The model [`AV.slx`](./models/AV.slx)(⚠️) is preconfigured with a pulse input, and the script [`simAV_Trace.m`](./models/simAV_Trace.m)(⚠️) is provided to run the simulation.
 
 1.Run the following in the Matlab command window:  
 ```matlab
 >> simAV_Trace
 ```
-2.Once the simulation finishes, [`Plottrace.m`](./models/Plottrace.m) can be used to plot the simulation traces:       
+2.Once the simulation finishes, [`Plottrace.m`](./models/Plottrace.m)(⚠️) can be used to plot the simulation traces:       
 ```matlab
 >> Plottrace 
 ```
@@ -339,7 +341,7 @@ The model The model [`AV.slx`](./models/AV.slx) is preconfigured with a pulse in
 
 This section describes how to simulate the full heart model operating under its intrinsic rhythm, without any external pacing stimulation.
 
-1.Open [`HeartExe.slx`](./models/HeartExe.slx) and click "Run" in Simulink, or run the following in the Matlab command window:     
+1.Open [`HeartExe.slx`](./models/HeartExe.slx)(⚠️) and click "Run" in Simulink, or run the following in the Matlab command window:     
 ```matlab
 >>open('HeartExe.slx')
 >>sim('HeartExe.slx')
@@ -458,7 +460,7 @@ After editing the model, <br> You can save it and it will then be redirected to 
 	     
 **5. Build a new heart model**           
 
-This section explains how to build a new heart model using the [`PreBuild.m`](./src/PreBuild.m).
+This section explains how to build a new heart model using the [`PreBuild.m`](./src/PreBuild.m)(⚠️).
 To build a new heart model, update the Excel configuration file (nodes, paths, probes, and parameters), set the correct root and library paths, and assign a unique model name. Then run the prebuild script.
 
 ## Examples
